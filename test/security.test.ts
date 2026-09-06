@@ -1,4 +1,5 @@
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { sha3_256 } from "@noble/hashes/sha3.js";
 import { describe, expect, it } from "vitest";
 import {
   aptosAddressFromEd25519,
@@ -351,6 +352,25 @@ describe("Gas Station request allowlist", () => {
     })).toThrow("take-profit limit or size requires a trigger");
   });
 
+  it("authorizes perpetual-only delegation exclusively on the owner route", () => {
+    const fixture = sponsoredFixture({
+      functionName: "delegate_perp_trading_to_for_subaccount",
+      arguments: [addressBytes("0x22"), addressBytes("0x44"), [0]],
+    });
+    const authorization = {
+      walletAddress: fixture.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: true,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+    expect(() => authorizeGasStationRequest(fixture.request, authorization)).not.toThrow();
+    expect(() => authorizeGasStationRequest(fixture.request, {
+      ...authorization, ownerOnly: false,
+    })).toThrow();
+  });
+
   it("authorizes the dedicated TP/SL cancellation ABI", () => {
     const fixture = sponsoredFixture({
       functionName: "cancel_tp_sl_order_for_position",
@@ -430,7 +450,7 @@ describe("Gas Station request allowlist", () => {
 });
 
 const DECIBEL_PACKAGE = "0xe7da2794b1d8af76532ed95f38bfdf1136abfd8ea3a240189971988a83101b7f";
-const USDC_METADATA = "0xbdabb88aa9a875f3a2ebe0974e24f3ae5e57cfd17c6abdfef8a8111f43681b7e";
+const USDC_METADATA = "0x5428acf5c112826d0c74ae1cd2de9030f53d1d01235e6c2621d967bf914ee1c8";
 
 function sponsoredFixture(input: { functionName: string; arguments: number[][] }): {
   request: { transactionBytes: number[]; senderAuth: number[] };
@@ -458,7 +478,7 @@ function sponsoredFixture(input: { functionName: string; arguments: number[][] }
     0,
     ...new Array(32).fill(0),
   ]);
-  const salt = createHash("sha3-256")
+  const salt = sha3_256.create()
     .update(Buffer.from("APTOS::RawTransactionWithData", "utf8"))
     .digest();
   const signature = sign(null, Buffer.concat([salt, transactionBytes]), privateKey);

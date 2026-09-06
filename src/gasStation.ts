@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha3_256 } from "@noble/hashes/sha3.js";
 import {
   aptosAddressFromEd25519Bytes,
   canonicalAddress,
@@ -26,7 +26,7 @@ const OWNER_FUNCTIONS = new Set([
   "create_new_subaccount",
   "deposit_to_subaccount_at",
   "withdraw_from_cross_collateral",
-  "delegate_all_trading_to_for_subaccount",
+  "delegate_perp_trading_to_for_subaccount",
   "revoke_delegation",
 ]);
 const TRADING_FUNCTIONS = new Set([
@@ -44,7 +44,7 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["create_new_subaccount", 0],
   ["deposit_to_subaccount_at", 3],
   ["withdraw_from_cross_collateral", 3],
-  ["delegate_all_trading_to_for_subaccount", 3],
+  ["delegate_perp_trading_to_for_subaccount", 3],
   ["revoke_delegation", 2],
   ["configure_user_settings_for_market", 4],
   ["place_order_to_subaccount", 15],
@@ -82,10 +82,10 @@ export function externalFeePayerFingerprint(request: GasStationRequest): string 
     bcsUleb128(request.additionalSignersAuth?.length ?? 0),
     ...(request.additionalSignersAuth ?? []).map(bcsBytes),
   ]);
-  const prefix = createHash("sha3-256")
+  const prefix = sha3_256.create()
     .update(Buffer.from("APTOS::ExternalFeePayerRequest", "utf8"))
     .digest();
-  return `0x${createHash("sha3-256").update(prefix).update(correlation).digest("hex")}`;
+  return `0x${Buffer.from(sha3_256.create().update(prefix).update(correlation).digest()).toString("hex")}`;
 }
 
 /**
@@ -114,7 +114,7 @@ export function authorizeGasStationRequest(
     throw new Error("Sender authenticator does not match the authenticated wallet");
   }
 
-  const signingSalt = createHash("sha3-256")
+  const signingSalt = sha3_256.create()
     .update(Buffer.from(RAW_TRANSACTION_WITH_DATA_SALT, "utf8"))
     .digest();
   const signingMessage = Buffer.concat([signingSalt, transactionBytes]);
@@ -167,7 +167,7 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       aptosAddress(args[1], "asset metadata");
       unsignedInteger(args[2], 8, "collateral amount", true);
       return;
-    case "delegate_all_trading_to_for_subaccount":
+    case "delegate_perp_trading_to_for_subaccount":
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "delegate");
       optionFixed(args[2], 8, "delegation expiry", true);

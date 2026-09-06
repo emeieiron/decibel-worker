@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, verify as verifyNodeSignature } from "node:crypto";
+import { createPublicKey, verify as verifyNodeSignature } from "node:crypto";
+import { sha3_256 } from "@noble/hashes/sha3.js";
 import type { SessionClaims } from "./types";
 
 const encoder = new TextEncoder();
@@ -89,7 +90,7 @@ export function aptosAddressFromEd25519(publicKeyHex: string): string {
 
 export function aptosAddressFromEd25519Bytes(publicKey: Uint8Array): string {
   if (publicKey.byteLength !== 32) throw new Error("Invalid public key");
-  const authenticationKey = createHash("sha3-256").update(publicKey).update(Uint8Array.of(0)).digest("hex");
+  const authenticationKey = Buffer.from(sha3_256.create().update(publicKey).update(Uint8Array.of(0)).digest()).toString("hex");
   return canonicalAddress(authenticationKey);
 }
 

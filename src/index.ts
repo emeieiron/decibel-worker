@@ -1,3 +1,4 @@
+import { isAllowedAptosReadPath } from "./routes";
 import {
   aptosAddressFromEd25519,
   buildChallenge,
@@ -655,13 +656,6 @@ async function upstreamFetch(
   return new Response(response.body, { status: response.status, headers: responseHeaders });
 }
 
-function isAllowedAptosReadPath(path: string): boolean {
-  return path === "/" ||
-    /^\/transactions\/by_hash\/0x[0-9a-fA-F]+$/.test(path) ||
-    /^\/accounts\/0x[0-9a-fA-F]{1,64}$/.test(path) ||
-    /^\/accounts\/0x[0-9a-fA-F]{1,64}\/(resources|modules)$/.test(path) ||
-    /^\/accounts\/0x[0-9a-fA-F]{1,64}\/resource\/.+$/.test(path);
-}
 
 function stateStub(namespace: DurableObjectNamespace, name: string): DurableObjectStub {
   return namespace.get(namespace.idFromName(name));
