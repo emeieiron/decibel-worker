@@ -1,0 +1,25 @@
+{
+  "name": "@flare/decibel-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npm run typecheck && npm test",
+    "secret:local": "node scripts/set-local-secret.mjs",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.2",
+    "@cloudflare/workers-types": "5.20260831.1",
+    "@types/node": "26.4.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.127.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

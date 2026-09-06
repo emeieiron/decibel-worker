@@ -1,0 +1,58 @@
+name = "flare-edge"
+main = "src/index.ts"
+compatibility_date = "2026-08-31"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NETWORK = "testnet"
+APP_ORIGIN = "flare://mobile"
+DECIBEL_ORIGIN = "flare://mobile"
+DECIBEL_REST_ORIGIN = "https://api.testnet.aptoslabs.com/decibel"
+DECIBEL_WS_ORIGIN = "wss://api.testnet.aptoslabs.com/decibel/ws"
+APTOS_FULLNODE_ORIGIN = "https://api.testnet.aptoslabs.com/v1"
+GAS_STATION_ORIGIN = "https://api.testnet.aptoslabs.com/gs/v1"
+DECIBEL_PACKAGE_ADDRESS = "0xe7da2794b1d8af76532ed95f38bfdf1136abfd8ea3a240189971988a83101b7f"
+USDC_METADATA_ADDRESS = "0xbdabb88aa9a875f3a2ebe0974e24f3ae5e57cfd17c6abdfef8a8111f43681b7e"
+
+[[durable_objects.bindings]]
+name = "NONCES"
+class_name = "FlareState"
+
+[[durable_objects.bindings]]
+name = "SESSIONS"
+class_name = "FlareState"
+
+[[durable_objects.bindings]]
+name = "SPONSORSHIPS"
+class_name = "FlareState"
+
+[exports.FlareState]
+type = "durable-object"
+storage = "sqlite"
+
+[[ratelimits]]
+name = "ANONYMOUS_RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[ratelimits]]
+name = "AUTHENTICATED_RATE_LIMITER"
+namespace_id = "1002"
+
+  [ratelimits.simple]
+  limit = 600
+  period = 60
+
+[[ratelimits]]
+name = "IP_BACKSTOP_RATE_LIMITER"
+namespace_id = "1003"
+
+  [ratelimits.simple]
+  limit = 2_000
+  period = 60
+
+# Set DECIBEL_NODE_API_KEY, GAS_STATION_API_KEY, and SESSION_SIGNING_KEY with
+# `wrangler secret put`. Never place their values in this file.
