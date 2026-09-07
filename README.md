@@ -16,7 +16,7 @@ The Worker and mobile client are versioned separately. A Flare release should re
 - `POST /gas/sponsor/trading`
 - `GET /gas/sponsor/status/:fingerprint`
 
-Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key.
+Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
 
 Successful sponsorships are correlated by Kaptos' domain-separated request fingerprint for seven days. The fixed status route lets an interrupted client recover the on-chain transaction hash and continue normal Kaptos reconciliation without resubmitting the transaction.
 
@@ -29,7 +29,9 @@ npm run check
 npm run dev
 ```
 
-`.dev.vars` must define `DECIBEL_NODE_API_KEY`, `GAS_STATION_API_KEY`, and a `SESSION_SIGNING_KEY` with at least 32 random bytes. Never commit `.dev.vars`.
+`.dev.vars` must define `DECIBEL_NODE_API_KEY` and a `SESSION_SIGNING_KEY` with at least 32 random bytes. Set `GAS_STATION_API_KEY` to enable sponsorship; this is a separate **Geomi Gas Station resource key**, not the node API key. Never commit `.dev.vars`.
+
+An absent or blank Gas Station key returns HTTP 503 with `code=gas_station_not_configured` without submitting a new transaction. Previously submitted or pending fingerprints are still resolved first. An upstream 401 returns HTTP 503 with `code=gas_station_credentials_rejected` after releasing its reservation. Neither invalidates the mobile wallet session. Clients may offer explicit self-pay for those two codes; a generic 503 or transport failure remains uncertain and must not trigger resubmission.
 
 For local development, pipe each value into the helper so it is never placed in shell history:
 

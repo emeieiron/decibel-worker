@@ -43,6 +43,6 @@ export interface Env {
   DECIBEL_PACKAGE_ADDRESS: string;
   USDC_METADATA_ADDRESS: string;
   DECIBEL_NODE_API_KEY: string;
-  GAS_STATION_API_KEY: string;
+  GAS_STATION_API_KEY?: string;
   SESSION_SIGNING_KEY: string;
 }

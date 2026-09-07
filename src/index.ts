@@ -306,8 +306,9 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   } catch (error) {
     throw new HttpError(400, safeMessage(error));
   }
+  let submissionBody;
   try {
-    authorizeGasStationRequest(body, {
+    submissionBody = authorizeGasStationRequest(body, {
       walletAddress: claims.wallet ?? "",
       subaccount: claims.subaccount,
       network: claims.network,
@@ -353,6 +354,11 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     }
     throw new HttpError(409, "Sponsorship request is already being processed");
   }
+  const gasStationApiKey = env.GAS_STATION_API_KEY?.trim();
+  if (!gasStationApiKey) {
+    await sponsorship.fetch("https://state/", { method: "DELETE" });
+    return sponsorshipUnavailable("gas_station_not_configured");
+  }
   const upstream = new URL(
     `${env.GAS_STATION_ORIGIN.replace(/\/$/, "")}/api/transaction/signAndSubmit`,
   );
@@ -361,10 +367,10 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     response = await fetch(upstream, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${env.GAS_STATION_API_KEY}`,
+        Authorization: `Bearer ${gasStationApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(submissionBody),
       redirect: "manual",
     });
   } catch {
@@ -374,6 +380,9 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   if (!response.ok) {
     if (DEFINITIVE_GAS_STATION_REJECTIONS.has(response.status)) {
       await sponsorship.fetch("https://state/", { method: "DELETE" });
+    }
+    if (response.status === 401) {
+      return sponsorshipUnavailable("gas_station_credentials_rejected");
     }
     return new Response(responseBody, {
       status: response.status,
@@ -406,6 +415,15 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   return Response.json(
     { transactionHash },
     { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+function sponsorshipUnavailable(
+  code: "gas_station_not_configured" | "gas_station_credentials_rejected",
+): Response {
+  return Response.json(
+    { error: "Gas sponsorship is unavailable. You can choose to pay gas with APT.", code },
+    { status: 503, headers: { "Cache-Control": "no-store" } },
   );
 }
 

@@ -97,7 +97,7 @@ export function externalFeePayerFingerprint(request: GasStationRequest): string 
 export function authorizeGasStationRequest(
   request: GasStationRequest,
   authorization: GasStationAuthorization,
-): void {
+): GasStationRequest {
   if (request.additionalSignersAuth?.length) {
     throw new Error("Secondary signers are not supported by Flare sponsorship");
   }
@@ -155,6 +155,15 @@ export function authorizeGasStationRequest(
   }
 
   validateFunctionArguments(sender.function, sender.arguments);
+
+  // Kaptos signs RawTransactionWithData: 1 || raw || [] || zero fee payer.
+  // Geomi accepts the TS SDK SimpleTransaction envelope: raw || true || fee payer.
+  // Parsing above requires canonical tags, no secondary signers, and no trailing bytes.
+  // Preserve the exact signed raw bytes and sender authenticator; only adapt the envelope.
+  return {
+    transactionBytes: [...request.transactionBytes.slice(1, -33), 1, ...request.transactionBytes.slice(-32)],
+    senderAuth: request.senderAuth,
+  };
 }
 
 function validateFunctionArguments(functionName: string, args: Uint8Array[]): void {
