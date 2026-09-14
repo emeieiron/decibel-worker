@@ -127,6 +127,11 @@ describe("Decibel account authorization records", () => {
       permission_type: "TradePerpsOnMarket",
       permission_market: canonicalAddress("0x44"),
     }, signer, 1_000_000)).toBe(false);
+    expect(delegationAuthorizesAllPerpMarkets({
+      delegated_account: signer,
+      permission_type: "TradeSpotAllMarkets",
+      expiration_time_s: 1_001,
+    }, signer, 1_000_000)).toBe(true);
   });
 
   it("requires an explicit permission signal for legacy records", () => {

@@ -31,12 +31,15 @@ export function delegationAuthorizesAllPerpMarkets(
     "account_to_delegate_to",
   );
   if (!delegate || !sameAddress(delegate, signer)) return false;
-  if (record.is_active === false || record.can_trade_perps === false) return false;
+  if (record.is_active === false) return false;
 
   const permissionType = record.permission_type;
+  if (record.can_trade_perps === false && permissionType !== "TradeSpotAllMarkets") return false;
+
   const hasAllMarketsPermission =
     permissionType === "TradePerpsAllMarkets" ||
-    (permissionType === undefined && record.can_trade_perps === true);
+    permissionType === "TradeSpotAllMarkets" ||
+    (permissionType === undefined && (record.can_trade_perps === true || record.can_trade_spot === true));
   if (!hasAllMarketsPermission) return false;
 
   const rawExpiry = numberField(
