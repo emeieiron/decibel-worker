@@ -21,7 +21,8 @@ export type GasStationAuthorization = {
 };
 
 const RAW_TRANSACTION_WITH_DATA_SALT = "APTOS::RawTransactionWithData";
-const DECIBEL_MODULE = "dex_accounts_entry";
+const DECIBEL_PERP_MODULE = "dex_accounts_entry";
+const DECIBEL_SPOT_MODULE = "dex_accounts_spot_entry";
 const OWNER_FUNCTIONS = new Set([
   "create_new_subaccount",
   "deposit_to_subaccount_at",
@@ -35,6 +36,12 @@ const TRADING_FUNCTIONS = new Set([
   "cancel_order_to_subaccount",
   "cancel_tp_sl_order_for_position",
   "place_tp_sl_order_for_position",
+  "place_spot_order_to_subaccount",
+  "cancel_spot_order_to_subaccount",
+]);
+const SPOT_TRADING_FUNCTIONS = new Set([
+  "place_spot_order_to_subaccount",
+  "cancel_spot_order_to_subaccount",
 ]);
 const FUNDING_FUNCTIONS = new Set([
   "deposit_to_subaccount_at",
@@ -51,6 +58,8 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["cancel_order_to_subaccount", 3],
   ["cancel_tp_sl_order_for_position", 3],
   ["place_tp_sl_order_for_position", 10],
+  ["place_spot_order_to_subaccount", 8],
+  ["cancel_spot_order_to_subaccount", 3],
 ]);
 
 /** Strictly narrows the public route to the Aptos Gas Station sign-and-submit operation. */
@@ -111,8 +120,11 @@ function authorizeDecibelCall(
   if (sender.typeArguments.length !== 0) {
     throw new Error("Decibel transactions do not accept type arguments");
   }
+  const expectedModule = SPOT_TRADING_FUNCTIONS.has(sender.function)
+    ? DECIBEL_SPOT_MODULE
+    : DECIBEL_PERP_MODULE;
   if (addressHex(sender.packageAddress) !== canonicalAddress(authorization.decibelPackageAddress) ||
-    sender.module !== DECIBEL_MODULE) {
+    sender.module !== expectedModule) {
     throw new Error("Transaction is outside the Decibel package allowlist");
   }
 
@@ -292,6 +304,23 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       emptyOption(args[9], "builder fee");
       return;
     }
+    case "place_spot_order_to_subaccount":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "market");
+      unsignedInteger(args[2], 8, "order price", true);
+      unsignedInteger(args[3], 8, "order size", true);
+      booleanArgument(args[4], "order side");
+      if (singleByte(args[5], "time in force") > 2) {
+        throw new Error("Time in force is outside the supported range");
+      }
+      emptyOption(args[6], "builder address");
+      emptyOption(args[7], "builder fee");
+      return;
+    case "cancel_spot_order_to_subaccount":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "market");
+      unsignedInteger(args[2], 16, "order ID", true);
+      return;
     default:
       throw new Error("Entry function has no argument policy");
   }

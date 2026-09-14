@@ -389,6 +389,54 @@ describe("Gas Station request allowlist", () => {
     })).not.toThrow();
   });
 
+  it("authorizes spot order placement and cancellation on dex_accounts_spot_entry", () => {
+    const baseArguments = [
+      addressBytes("0x22"),
+      addressBytes("0x33"),
+      u64(10n),
+      u64(2n),
+      [1],
+      [2],
+      [0],
+      [0],
+    ];
+    const acceptedPlace = sponsoredFixture({
+      module: "dex_accounts_spot_entry",
+      functionName: "place_spot_order_to_subaccount",
+      arguments: baseArguments,
+    });
+    const authorization = {
+      walletAddress: acceptedPlace.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: false,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+
+    expect(() => authorizeGasStationRequest(acceptedPlace.request, authorization)).not.toThrow();
+
+    const wrongModule = sponsoredFixture({
+      module: "dex_accounts_entry",
+      functionName: "place_spot_order_to_subaccount",
+      arguments: baseArguments,
+    });
+    expect(() => authorizeGasStationRequest(wrongModule.request, {
+      ...authorization,
+      walletAddress: wrongModule.walletAddress,
+    })).toThrow("Transaction is outside the Decibel package allowlist");
+
+    const acceptedCancel = sponsoredFixture({
+      module: "dex_accounts_spot_entry",
+      functionName: "cancel_spot_order_to_subaccount",
+      arguments: [addressBytes("0x22"), addressBytes("0x33"), new Array(16).fill(0xff)],
+    });
+    expect(() => authorizeGasStationRequest(acceptedCancel.request, {
+      ...authorization,
+      walletAddress: acceptedCancel.walletAddress,
+    })).not.toThrow();
+  });
+
   it("rejects leverage outside the documented range", () => {
     const fixture = sponsoredFixture({
       functionName: "configure_user_settings_for_market",
