@@ -74,6 +74,76 @@ export function validateGasStationRequest(value: unknown): GasStationRequest {
   };
 }
 
+/**
+ * Withdrawing to an address other than the owner wallet needs a second transaction: an Aptos USDC
+ * transfer from the owner's primary store. It is the only non-Decibel call Flare sponsors, and it
+ * stays bound to an owner session so a trading key can never move funds out.
+ */
+function isOwnerUsdcTransfer(sender: ParsedSponsoredTransaction): boolean {
+  return addressHex(sender.packageAddress) === canonicalAddress("0x1") &&
+    sender.module === "primary_fungible_store" && sender.function === "transfer";
+}
+
+function authorizeOwnerUsdcTransfer(
+  sender: ParsedSponsoredTransaction,
+  authorization: GasStationAuthorization,
+): void {
+  if (!authorization.ownerOnly || !authorization.subaccount) {
+    throw new Error("USDC transfers require a subaccount-bound owner session");
+  }
+  if (sender.typeArguments.length !== 1 ||
+    sender.typeArguments[0] !== `${canonicalAddress("0x1")}::fungible_asset::Metadata`) {
+    throw new Error("Only the fungible-asset Metadata type can be transferred");
+  }
+  if (sender.arguments.length !== 3) throw new Error("USDC transfer requires three arguments");
+  aptosAddress(sender.arguments[0], "asset metadata");
+  if (addressHex(sender.arguments[0]!) !== canonicalAddress(authorization.usdcMetadataAddress)) {
+    throw new Error("Only the configured Aptos USDC asset can be sponsored");
+  }
+  aptosAddress(sender.arguments[1], "destination");
+  unsignedInteger(sender.arguments[2], 8, "transfer amount", true);
+}
+
+function authorizeDecibelCall(
+  sender: ParsedSponsoredTransaction,
+  authorization: GasStationAuthorization,
+): void {
+  if (sender.typeArguments.length !== 0) {
+    throw new Error("Decibel transactions do not accept type arguments");
+  }
+  if (addressHex(sender.packageAddress) !== canonicalAddress(authorization.decibelPackageAddress) ||
+    sender.module !== DECIBEL_MODULE) {
+    throw new Error("Transaction is outside the Decibel package allowlist");
+  }
+
+  const allowedFunctions = authorization.ownerOnly ? OWNER_FUNCTIONS : TRADING_FUNCTIONS;
+  if (!allowedFunctions.has(sender.function)) {
+    throw new Error("Entry function is outside the sponsorship route allowlist");
+  }
+  if (sender.arguments.length !== EXPECTED_ARGUMENT_COUNTS.get(sender.function)) {
+    throw new Error("Entry-function argument count does not match the Flare contract");
+  }
+
+  if (sender.function !== "create_new_subaccount") {
+    if (!authorization.subaccount) throw new Error("A subaccount-bound session is required");
+    const argument = sender.arguments[0];
+    if (!argument || argument.byteLength !== 32 ||
+      addressHex(argument) !== canonicalAddress(authorization.subaccount)) {
+      throw new Error("Transaction subaccount does not match the session scope");
+    }
+  }
+
+  if (FUNDING_FUNCTIONS.has(sender.function)) {
+    const asset = sender.arguments[1];
+    if (!asset || asset.byteLength !== 32 ||
+      addressHex(asset) !== canonicalAddress(authorization.usdcMetadataAddress)) {
+      throw new Error("Only the configured Aptos USDC asset can be sponsored");
+    }
+  }
+
+  validateFunctionArguments(sender.function, sender.arguments);
+}
+
 /** Matches Kaptos' domain-separated correlation fingerprint for an external fee-payer request. */
 export function externalFeePayerFingerprint(request: GasStationRequest): string {
   const correlation = Buffer.concat([
@@ -124,37 +194,11 @@ export function authorizeGasStationRequest(
 
   const expectedChainId = authorization.network === "mainnet" ? 1 : 2;
   if (sender.chainId !== expectedChainId) throw new Error("Transaction network mismatch");
-  if (addressHex(sender.packageAddress) !== canonicalAddress(authorization.decibelPackageAddress) ||
-    sender.module !== DECIBEL_MODULE) {
-    throw new Error("Transaction is outside the Decibel package allowlist");
+  if (isOwnerUsdcTransfer(sender)) {
+    authorizeOwnerUsdcTransfer(sender, authorization);
+  } else {
+    authorizeDecibelCall(sender, authorization);
   }
-
-  const allowedFunctions = authorization.ownerOnly ? OWNER_FUNCTIONS : TRADING_FUNCTIONS;
-  if (!allowedFunctions.has(sender.function)) {
-    throw new Error("Entry function is outside the sponsorship route allowlist");
-  }
-  if (sender.arguments.length !== EXPECTED_ARGUMENT_COUNTS.get(sender.function)) {
-    throw new Error("Entry-function argument count does not match the Flare contract");
-  }
-
-  if (sender.function !== "create_new_subaccount") {
-    if (!authorization.subaccount) throw new Error("A subaccount-bound session is required");
-    const argument = sender.arguments[0];
-    if (!argument || argument.byteLength !== 32 ||
-      addressHex(argument) !== canonicalAddress(authorization.subaccount)) {
-      throw new Error("Transaction subaccount does not match the session scope");
-    }
-  }
-
-  if (FUNDING_FUNCTIONS.has(sender.function)) {
-    const asset = sender.arguments[1];
-    if (!asset || asset.byteLength !== 32 ||
-      addressHex(asset) !== canonicalAddress(authorization.usdcMetadataAddress)) {
-      throw new Error("Only the configured Aptos USDC asset can be sponsored");
-    }
-  }
-
-  validateFunctionArguments(sender.function, sender.arguments);
 
   // Kaptos signs RawTransactionWithData: 1 || raw || [] || zero fee payer.
   // Geomi accepts the TS SDK SimpleTransaction envelope: raw || true || fee payer.
@@ -316,6 +360,7 @@ type ParsedSponsoredTransaction = {
   module: string;
   function: string;
   arguments: Uint8Array[];
+  typeArguments: string[];
   chainId: number;
 };
 
@@ -330,7 +375,7 @@ function parseSponsoredTransaction(bytes: Uint8Array): ParsedSponsoredTransactio
   const functionName = reader.identifier();
   const typeArgumentCount = reader.uleb128();
   if (typeArgumentCount > 64) throw new Error("Too many transaction type arguments");
-  for (let index = 0; index < typeArgumentCount; index += 1) reader.typeTag(0);
+  const typeArguments = Array.from({ length: typeArgumentCount }, () => reader.typeTag(0));
   const argumentCount = reader.uleb128();
   if (argumentCount > 64) throw new Error("Too many transaction arguments");
   const args = Array.from({ length: argumentCount }, () => reader.bytes(64 * 1024));
@@ -350,6 +395,7 @@ function parseSponsoredTransaction(bytes: Uint8Array): ParsedSponsoredTransactio
     module,
     function: functionName,
     arguments: args,
+    typeArguments,
     chainId,
   };
 }
@@ -417,23 +463,23 @@ class BcsReader {
     return value;
   }
 
-  typeTag(depth: number): void {
+  typeTag(depth: number): string {
     if (depth > 16) throw new Error("Type tag nesting is too deep");
     const variant = this.uleb128();
     if (variant === 6) {
-      this.typeTag(depth + 1);
-      return;
+      return `vector<${this.typeTag(depth + 1)}>`;
     }
     if (variant === 7) {
-      this.fixed(32);
-      this.identifier();
-      this.identifier();
+      const address = addressHex(this.fixed(32));
+      const module = this.identifier();
+      const name = this.identifier();
       const length = this.uleb128();
       if (length > 64) throw new Error("Too many struct type arguments");
-      for (let index = 0; index < length; index += 1) this.typeTag(depth + 1);
-      return;
+      const arguments_ = Array.from({ length }, () => this.typeTag(depth + 1));
+      return `${address}::${module}::${name}${length ? `<${arguments_.join(",")}>` : ""}`;
     }
     if (variant > 16) throw new Error("Unsupported transaction type tag");
+    return `primitive:${variant}`;
   }
 
   finished(): void {

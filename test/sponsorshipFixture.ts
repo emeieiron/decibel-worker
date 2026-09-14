@@ -5,7 +5,7 @@ function toHex(bytes: Uint8Array): string { return Buffer.from(bytes).toString("
 export const DECIBEL_PACKAGE = "0xe7da2794b1d8af76532ed95f38bfdf1136abfd8ea3a240189971988a83101b7f";
 export const USDC_METADATA = "0x5428acf5c112826d0c74ae1cd2de9030f53d1d01235e6c2621d967bf914ee1c8";
 
-export function sponsoredFixture(input: { functionName: string; arguments: number[][] }): {
+export function sponsoredFixture(input: { functionName: string; arguments: number[][]; packageAddress?: string; module?: string; typeArguments?: number[][] }): {
   request: { transactionBytes: number[]; senderAuth: number[] };
   walletAddress: string;
 } {
@@ -18,10 +18,11 @@ export function sponsoredFixture(input: { functionName: string; arguments: numbe
     ...addressBytes(walletAddress),
     ...u64(0n),
     2,
-    ...addressBytes(DECIBEL_PACKAGE),
-    ...bcsString("dex_accounts_entry"),
+    ...addressBytes(input.packageAddress ?? DECIBEL_PACKAGE),
+    ...bcsString(input.module ?? "dex_accounts_entry"),
     ...bcsString(input.functionName),
-    0,
+    input.typeArguments?.length ?? 0,
+    ...(input.typeArguments ?? []).flat(),
     input.arguments.length,
     ...input.arguments.flatMap((argument) => [argument.length, ...argument]),
     ...u64(200_000n),
@@ -48,7 +49,7 @@ export function addressBytes(value: string): number[] {
   return Array.from(Buffer.from(canonicalAddress(value).slice(2), "hex"));
 }
 
-function bcsString(value: string): number[] {
+export function bcsString(value: string): number[] {
   const bytes: number[] = Array.from(Buffer.from(value, "utf8") as Uint8Array);
   return [bytes.length, ...bytes];
 }
