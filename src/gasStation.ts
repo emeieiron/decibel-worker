@@ -28,6 +28,7 @@ const OWNER_FUNCTIONS = new Set([
   "deposit_to_subaccount_at",
   "withdraw_from_cross_collateral",
   "delegate_perp_trading_to_for_subaccount",
+  "delegate_all_trading_to_for_subaccount",
   "revoke_delegation",
 ]);
 const TRADING_FUNCTIONS = new Set([
@@ -52,6 +53,7 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["deposit_to_subaccount_at", 3],
   ["withdraw_from_cross_collateral", 3],
   ["delegate_perp_trading_to_for_subaccount", 3],
+  ["delegate_all_trading_to_for_subaccount", 3],
   ["revoke_delegation", 2],
   ["configure_user_settings_for_market", 4],
   ["place_order_to_subaccount", 15],
@@ -233,6 +235,7 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       unsignedInteger(args[2], 8, "collateral amount", true);
       return;
     case "delegate_perp_trading_to_for_subaccount":
+    case "delegate_all_trading_to_for_subaccount":
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "delegate");
       optionFixed(args[2], 8, "delegation expiry", true);
