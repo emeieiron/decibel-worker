@@ -43,6 +43,7 @@ const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "markets",
   "orderbook",
   "prices",
+  "spot/asset_contexts",
   "trades",
 ]);
 
@@ -251,7 +252,9 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") throw new HttpError(405, "Only GET is allowed for Decibel REST");
   const url = new URL(request.url);
   const endpoint = url.pathname.slice("/decibel/api/v1/".length);
-  if (!endpoint || endpoint.includes("/")) throw new HttpError(404, "Decibel route is not allowlisted");
+  if (!endpoint || (endpoint.includes("/") && !PUBLIC_DECIBEL_ENDPOINTS.has(endpoint))) {
+    throw new HttpError(404, "Decibel route is not allowlisted");
+  }
   const claims = await authenticate(request, env);
   await enforceSessionRateLimit(claims, env);
 
@@ -266,10 +269,20 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
 
   const upstream = new URL(`${env.DECIBEL_REST_ORIGIN.replace(/\/$/, "")}/api/v1/${endpoint}`);
   upstream.search = url.search;
-  return upstreamFetch(request, upstream, {
-    Authorization: `Bearer ${env.DECIBEL_NODE_API_KEY}`,
-    Origin: env.DECIBEL_ORIGIN,
-  }, endpoint === "markets" || endpoint === "prices" ? "public" : "private");
+  return upstreamFetch(
+    request,
+    upstream,
+    {
+      Authorization: `Bearer ${env.DECIBEL_NODE_API_KEY}`,
+      Origin: env.DECIBEL_ORIGIN,
+    },
+    endpoint === "markets" ||
+      endpoint === "prices" ||
+      endpoint === "asset_contexts" ||
+      endpoint === "spot/asset_contexts"
+      ? "public"
+      : "private",
+  );
 }
 
 async function proxyAptos(request: Request, env: Env): Promise<Response> {
