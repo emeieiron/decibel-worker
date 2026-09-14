@@ -391,6 +391,7 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   }
   const responseBody = await response.text();
   if (!response.ok) {
+    console.error("Gas Station error:", response.status, responseBody);
     if (DEFINITIVE_GAS_STATION_REJECTIONS.has(response.status)) {
       await sponsorship.fetch("https://state/", { method: "DELETE" });
     }
