@@ -302,7 +302,11 @@ async function proxyAptos(request: Request, env: Env): Promise<Response> {
 
   const upstream = new URL(`${env.APTOS_FULLNODE_ORIGIN.replace(/\/$/, "")}${suffix}`);
   upstream.search = url.search;
-  return upstreamFetch(request, upstream, {}, readAllowed || publicView ? "public" : "private");
+  const headers: Record<string, string> = {};
+  if (env.DECIBEL_NODE_API_KEY) {
+    headers.Authorization = `Bearer ${env.DECIBEL_NODE_API_KEY}`;
+  }
+  return upstreamFetch(request, upstream, headers, readAllowed || publicView ? "public" : "private");
 }
 
 async function proxyGasStation(request: Request, env: Env): Promise<Response> {
@@ -515,7 +519,11 @@ async function proxyWebSocket(request: Request, env: Env): Promise<Response> {
         changed = activeTopics.delete(message.topic);
       }
       if (!changed) {
-        server.send(JSON.stringify({ success: true, method: message.method, topic: message.topic }));
+        if (!downstreamClosed && server.readyState === WebSocket.OPEN) {
+          try {
+            server.send(JSON.stringify({ success: true, method: message.method, topic: message.topic }));
+          } catch {}
+        }
         return;
       }
       if (upstream.readyState === WebSocket.OPEN) upstream.send(event.data);
@@ -526,7 +534,11 @@ async function proxyWebSocket(request: Request, env: Env): Promise<Response> {
         pending.push(event.data);
       }
     } catch (error) {
-      server.send(JSON.stringify({ success: false, error: safeMessage(error) }));
+      if (!downstreamClosed && server.readyState === WebSocket.OPEN) {
+        try {
+          server.send(JSON.stringify({ success: false, error: safeMessage(error) }));
+        } catch {}
+      }
     }
   });
   upstream.addEventListener("open", () => {
@@ -538,7 +550,11 @@ async function proxyWebSocket(request: Request, env: Env): Promise<Response> {
     for (const message of pending.splice(0)) upstream.send(message);
   });
   upstream.addEventListener("message", (event) => {
-    if (!downstreamClosed && server.readyState === WebSocket.OPEN) server.send(event.data);
+    if (!downstreamClosed && server.readyState === WebSocket.OPEN) {
+      try {
+        server.send(event.data);
+      } catch {}
+    }
   });
   upstream.addEventListener("close", (event) => {
     clearTimeout(closeForExpiry);
@@ -629,6 +645,7 @@ function enforceAccountScope(endpoint: string, parameters: URLSearchParams, clai
 }
 
 async function enforceSessionRateLimit(claims: SessionClaims, env: Env): Promise<void> {
+  if (env.NETWORK === "testnet") return;
   const limiter = claims.role === "anonymous" ? env.ANONYMOUS_RATE_LIMITER : env.AUTHENTICATED_RATE_LIMITER;
   const key = claims.role === "anonymous" ? claims.jti : `${claims.wallet}:${claims.subaccount ?? "primary"}`;
   const result = await limiter.limit({ key });
@@ -636,7 +653,8 @@ async function enforceSessionRateLimit(claims: SessionClaims, env: Env): Promise
 }
 
 async function enforceIpBackstop(request: Request, env: Env): Promise<void> {
-  const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (!ip || ip === "127.0.0.1" || ip === "localhost") return;
   const result = await env.IP_BACKSTOP_RATE_LIMITER.limit({ key: ip });
   if (!result.success) throw new HttpError(429, "Rate limit exceeded");
 }
@@ -680,9 +698,16 @@ async function upstreamFetch(
     redirect: "manual",
   });
   const responseHeaders = new Headers();
-  for (const name of ["Content-Type", "ETag", "Last-Modified"]) {
-    const value = response.headers.get(name);
-    if (value) responseHeaders.set(name, value);
+  for (const [name, value] of response.headers.entries()) {
+    const lower = name.toLowerCase();
+    if (
+      lower === "content-type" ||
+      lower === "etag" ||
+      lower === "last-modified" ||
+      lower.startsWith("x-aptos-")
+    ) {
+      responseHeaders.set(name, value);
+    }
   }
   responseHeaders.set("Cache-Control", cacheScope === "public" ? "public, max-age=5" : "no-store");
   return new Response(response.body, { status: response.status, headers: responseHeaders });
@@ -735,6 +760,7 @@ function corsResponse(env: Env, response: Response | null, status?: number): Res
 
 function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) return jsonError(error.message, error.status);
+  console.error("Internal request failure:", error);
   return jsonError("Internal request failure", 500);
 }
 
