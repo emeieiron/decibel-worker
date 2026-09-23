@@ -553,6 +553,77 @@ describe("Gas Station request allowlist", () => {
     })).toThrow("Only the configured Aptos USDC asset can be sponsored");
   });
 
+  it("authorizes TWAP order placement and cancellation", () => {
+    const twapPlaceArguments = [
+      addressBytes("0x22"),
+      addressBytes("0x33"),
+      u64(100_000n),
+      [1],
+      [0],
+      [0],
+      u64(60n),
+      u64(3600n),
+      [0],
+      [0],
+    ];
+    const acceptedTwap = sponsoredFixture({
+      functionName: "place_twap_order_to_subaccount_v2",
+      arguments: twapPlaceArguments,
+    });
+    const authorization = {
+      walletAddress: acceptedTwap.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: false,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+    expect(() => authorizeGasStationRequest(acceptedTwap.request, authorization)).not.toThrow();
+
+    const cancelTwap = sponsoredFixture({
+      functionName: "cancel_twap_orders_to_subaccount",
+      arguments: [addressBytes("0x22"), addressBytes("0x33"), new Array(16).fill(0x01)],
+    });
+    expect(() => authorizeGasStationRequest(cancelTwap.request, {
+      ...authorization,
+      walletAddress: cancelTwap.walletAddress,
+    })).not.toThrow();
+  });
+
+  it("authorizes vault contributions and redemptions on owner session", () => {
+    const contribute = sponsoredFixture({
+      functionName: "contribute_to_vault",
+      arguments: [
+        addressBytes("0x22"),
+        addressBytes("0x44"),
+        addressBytes(USDC_METADATA),
+        u64(50_000_000n),
+      ],
+    });
+    const ownerAuth = {
+      walletAddress: contribute.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: true,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+    expect(() => authorizeGasStationRequest(contribute.request, ownerAuth)).not.toThrow();
+
+    const redeem = sponsoredFixture({
+      functionName: "redeem_from_vault",
+      arguments: [
+        addressBytes("0x22"),
+        addressBytes("0x44"),
+        u64(10_000_000n),
+      ],
+    });
+    expect(() => authorizeGasStationRequest(redeem.request, {
+      ...ownerAuth,
+      walletAddress: redeem.walletAddress,
+    })).not.toThrow();
+  });
+
   it("rejects a sender signature after transaction bytes are changed", () => {
     const fixture = sponsoredFixture({ functionName: "create_new_subaccount", arguments: [] });
     fixture.request.transactionBytes[33] = 1;

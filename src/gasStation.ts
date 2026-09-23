@@ -32,6 +32,8 @@ const OWNER_FUNCTIONS = new Set([
   "revoke_delegation",
   "approve_max_builder_fee_for_subaccount",
   "revoke_max_builder_fee_for_subaccount",
+  "contribute_to_vault",
+  "redeem_from_vault",
 ]);
 const TRADING_FUNCTIONS = new Set([
   "configure_user_settings_for_market",
@@ -41,6 +43,8 @@ const TRADING_FUNCTIONS = new Set([
   "place_tp_sl_order_for_position",
   "place_spot_order_to_subaccount",
   "cancel_spot_order_to_subaccount",
+  "place_twap_order_to_subaccount_v2",
+  "cancel_twap_orders_to_subaccount",
 ]);
 const SPOT_TRADING_FUNCTIONS = new Set([
   "place_spot_order_to_subaccount",
@@ -49,6 +53,7 @@ const SPOT_TRADING_FUNCTIONS = new Set([
 const FUNDING_FUNCTIONS = new Set([
   "deposit_to_subaccount_at",
   "withdraw_from_cross_collateral",
+  "contribute_to_vault",
 ]);
 const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["create_new_subaccount", 0],
@@ -66,6 +71,10 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["place_tp_sl_order_for_position", 10],
   ["place_spot_order_to_subaccount", 8],
   ["cancel_spot_order_to_subaccount", 3],
+  ["place_twap_order_to_subaccount_v2", 10],
+  ["cancel_twap_orders_to_subaccount", 3],
+  ["contribute_to_vault", 4],
+  ["redeem_from_vault", 3],
 ]);
 
 /** Strictly narrows the public route to the Aptos Gas Station sign-and-submit operation. */
@@ -152,7 +161,7 @@ function authorizeDecibelCall(
   }
 
   if (FUNDING_FUNCTIONS.has(sender.function)) {
-    const asset = sender.arguments[1];
+    const asset = sender.function === "contribute_to_vault" ? sender.arguments[2] : sender.arguments[1];
     if (!asset || asset.byteLength !== 32 ||
       addressHex(asset) !== canonicalAddress(authorization.usdcMetadataAddress)) {
       throw new Error("Only the configured Aptos USDC asset can be sponsored");
@@ -354,6 +363,38 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "market");
       unsignedInteger(args[2], 16, "order ID", true);
+      return;
+    case "place_twap_order_to_subaccount_v2": {
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "market");
+      unsignedInteger(args[2], 8, "order size", true);
+      booleanArgument(args[3], "order side");
+      booleanArgument(args[4], "reduce-only flag");
+      optionString(args[5], "client order ID");
+      unsignedInteger(args[6], 8, "twap frequency seconds", true);
+      unsignedInteger(args[7], 8, "twap duration seconds", true);
+      const hasBuilderAddress = optionAddress(args[8], "builder address");
+      const hasBuilderFee = optionBuilderFee(args[9], "builder fee");
+      if (hasBuilderFee !== hasBuilderAddress) {
+        throw new Error("Builder address and fee must both be set or both be absent");
+      }
+      return;
+    }
+    case "cancel_twap_orders_to_subaccount":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "market");
+      unsignedInteger(args[2], 16, "TWAP order ID", true);
+      return;
+    case "contribute_to_vault":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "vault");
+      aptosAddress(args[2], "asset metadata");
+      unsignedInteger(args[3], 8, "contribution amount", true);
+      return;
+    case "redeem_from_vault":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "vault");
+      unsignedInteger(args[2], 8, "shares amount", true);
       return;
     default:
       throw new Error("Entry function has no argument policy");

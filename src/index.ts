@@ -46,12 +46,18 @@ const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "spot/asset_contexts",
   "subaccounts",
   "trades",
+  "vaults",
 ]);
 
 const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "account_fund_history",
   "account_overviews",
   "account_positions",
+  "account_vault_performance",
+  "account_owned_vaults",
+  "active_twaps",
+  "twap_history",
+  "portfolio_chart",
   "delegations",
   "funding_rate_history",
   "open_orders",
@@ -59,6 +65,8 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "trade_history",
   "user_fee_rates",
   "withdraw_queue",
+  "points/amps",
+  "points/amps/daily",
 ]);
 
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -252,13 +260,18 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") throw new HttpError(405, "Only GET is allowed for Decibel REST");
   const url = new URL(request.url);
   const endpoint = url.pathname.slice("/decibel/api/v1/".length);
-  if (!endpoint || (endpoint.includes("/") && !PUBLIC_DECIBEL_ENDPOINTS.has(endpoint))) {
+  const isPublicReferral = endpoint.startsWith("referrals/code/");
+  const isAllowed =
+    PUBLIC_DECIBEL_ENDPOINTS.has(endpoint) ||
+    ACCOUNT_DECIBEL_ENDPOINTS.has(endpoint) ||
+    isPublicReferral;
+  if (!endpoint || !isAllowed) {
     throw new HttpError(404, "Decibel route is not allowlisted");
   }
   const claims = await authenticate(request, env);
   await enforceSessionRateLimit(claims, env);
 
-  if (PUBLIC_DECIBEL_ENDPOINTS.has(endpoint)) {
+  if (PUBLIC_DECIBEL_ENDPOINTS.has(endpoint) || isPublicReferral) {
     // Public market data is available to every valid Flare session.
   } else if (ACCOUNT_DECIBEL_ENDPOINTS.has(endpoint)) {
     if (claims.role === "anonymous") throw new HttpError(403, "Wallet session required");
@@ -276,13 +289,7 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
       Authorization: `Bearer ${env.DECIBEL_NODE_API_KEY}`,
       Origin: env.DECIBEL_ORIGIN,
     },
-    endpoint === "markets" ||
-      endpoint === "prices" ||
-      endpoint === "asset_contexts" ||
-      endpoint === "spot/asset_contexts" ||
-      endpoint === "subaccounts"
-      ? "public"
-      : "private",
+    PUBLIC_DECIBEL_ENDPOINTS.has(endpoint) || isPublicReferral ? "public" : "private",
   );
 }
 
@@ -630,6 +637,13 @@ function enforceAccountScope(endpoint: string, parameters: URLSearchParams, clai
     const requested = parameters.get("subaccount");
     if (!claims.subaccount || !requested || canonicalAddress(requested) !== claims.subaccount) {
       throw new HttpError(403, "Subaccount scope mismatch");
+    }
+    return;
+  }
+  if (endpoint === "points/amps" || endpoint === "points/amps/daily") {
+    const owner = parameters.get("owner");
+    if (!claims.wallet || !owner || canonicalAddress(owner) !== claims.wallet) {
+      throw new HttpError(403, "Owner scope mismatch");
     }
     return;
   }
