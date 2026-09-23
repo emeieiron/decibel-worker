@@ -285,14 +285,14 @@ describe("Gas Station request allowlist", () => {
     })).not.toThrow();
   });
 
-  it("accepts the pinned order ABI only when builder fields are empty", () => {
+  it("authorizes place_order with builder fields and validates bounds", () => {
     const baseArguments = [
       addressBytes("0x22"),
       addressBytes("0x33"),
       u64(10n),
-      u64(2n),
+      u64(20n),
       [1],
-      [2],
+      [0],
       [0],
       [0],
       [0],
@@ -323,13 +323,76 @@ describe("Gas Station request allowlist", () => {
       arguments: [
         ...baseArguments.slice(0, 13),
         [1, ...addressBytes("0x99")],
-        [1, ...u64(1n)],
+        [1, ...u64(500n)],
       ],
     });
     expect(() => authorizeGasStationRequest(withBuilderFee.request, {
       ...authorization,
       walletAddress: withBuilderFee.walletAddress,
-    })).toThrow("builder address is not supported");
+    })).not.toThrow();
+
+    const exceedingMaxFee = sponsoredFixture({
+      functionName: "place_order_to_subaccount",
+      arguments: [
+        ...baseArguments.slice(0, 13),
+        [1, ...addressBytes("0x99")],
+        [1, ...u64(1001n)],
+      ],
+    });
+    expect(() => authorizeGasStationRequest(exceedingMaxFee.request, {
+      ...authorization,
+      walletAddress: exceedingMaxFee.walletAddress,
+    })).toThrow("exceeds maximum allowed builder fee");
+
+    const mismatchedFee = sponsoredFixture({
+      functionName: "place_order_to_subaccount",
+      arguments: [
+        ...baseArguments.slice(0, 13),
+        [1, ...addressBytes("0x99")],
+        [0],
+      ],
+    });
+    expect(() => authorizeGasStationRequest(mismatchedFee.request, {
+      ...authorization,
+      walletAddress: mismatchedFee.walletAddress,
+    })).toThrow("Builder address and fee must both be set or both be absent");
+  });
+
+  it("authorizes approve and revoke max builder fee on owner session", () => {
+    const approve = sponsoredFixture({
+      functionName: "approve_max_builder_fee_for_subaccount",
+      arguments: [
+        addressBytes("0x22"),
+        addressBytes("0x99"),
+        u64(500n),
+      ],
+    });
+    const ownerAuth = {
+      walletAddress: approve.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: true,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+    expect(() => authorizeGasStationRequest(approve.request, ownerAuth)).not.toThrow();
+
+    const revoke = sponsoredFixture({
+      functionName: "revoke_max_builder_fee_for_subaccount",
+      arguments: [
+        addressBytes("0x22"),
+        addressBytes("0x99"),
+      ],
+    });
+    expect(() => authorizeGasStationRequest(revoke.request, {
+      ...ownerAuth,
+      walletAddress: revoke.walletAddress,
+    })).not.toThrow();
+
+    expect(() => authorizeGasStationRequest(approve.request, {
+      ...ownerAuth,
+      ownerOnly: false,
+    })).toThrow("Entry function is outside the sponsorship route allowlist");
   });
 
   it("rejects shifted TP/SL option slots", () => {

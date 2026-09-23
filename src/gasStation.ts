@@ -30,6 +30,8 @@ const OWNER_FUNCTIONS = new Set([
   "delegate_perp_trading_to_for_subaccount",
   "delegate_all_trading_to_for_subaccount",
   "revoke_delegation",
+  "approve_max_builder_fee_for_subaccount",
+  "revoke_max_builder_fee_for_subaccount",
 ]);
 const TRADING_FUNCTIONS = new Set([
   "configure_user_settings_for_market",
@@ -55,6 +57,8 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["delegate_perp_trading_to_for_subaccount", 3],
   ["delegate_all_trading_to_for_subaccount", 3],
   ["revoke_delegation", 2],
+  ["approve_max_builder_fee_for_subaccount", 3],
+  ["revoke_max_builder_fee_for_subaccount", 2],
   ["configure_user_settings_for_market", 4],
   ["place_order_to_subaccount", 15],
   ["cancel_order_to_subaccount", 3],
@@ -244,6 +248,20 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "delegate");
       return;
+    case "approve_max_builder_fee_for_subaccount": {
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "builder address");
+      unsignedInteger(args[2], 8, "max fee", true);
+      const maxFee = new DataView(args[2].buffer, args[2].byteOffset, 8).getBigUint64(0, true);
+      if (maxFee > 1000n) {
+        throw new Error("Max builder fee exceeds maximum allowed (1000 units / 10 bps)");
+      }
+      return;
+    }
+    case "revoke_max_builder_fee_for_subaccount":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "builder address");
+      return;
     case "configure_user_settings_for_market": {
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "market");
@@ -274,8 +292,13 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       if (hasStopLossLimit && !hasStopLossTrigger) {
         throw new Error("A stop-loss limit requires a trigger");
       }
-      emptyOption(args[13], "builder address");
-      emptyOption(args[14], "builder fee");
+      {
+        const hasBuilderAddress = optionAddress(args[13], "builder address");
+        const hasBuilderFee = optionBuilderFee(args[14], "builder fee");
+        if (hasBuilderFee !== hasBuilderAddress) {
+          throw new Error("Builder address and fee must both be set or both be absent");
+        }
+      }
       return;
     case "cancel_order_to_subaccount":
       aptosAddress(args[0], "subaccount");
@@ -303,8 +326,11 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       if ((hasStopLossLimit || hasStopLossSize) && !hasStopLoss) {
         throw new Error("A stop-loss limit or size requires a trigger");
       }
-      emptyOption(args[8], "builder address");
-      emptyOption(args[9], "builder fee");
+      const hasBuilderAddress = optionAddress(args[8], "builder address");
+      const hasBuilderFee = optionBuilderFee(args[9], "builder fee");
+      if (hasBuilderFee !== hasBuilderAddress) {
+        throw new Error("Builder address and fee must both be set or both be absent");
+      }
       return;
     }
     case "place_spot_order_to_subaccount":
@@ -316,8 +342,13 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       if (singleByte(args[5], "time in force") > 2) {
         throw new Error("Time in force is outside the supported range");
       }
-      emptyOption(args[6], "builder address");
-      emptyOption(args[7], "builder fee");
+      {
+        const hasBuilderAddress = optionAddress(args[6], "builder address");
+        const hasBuilderFee = optionBuilderFee(args[7], "builder fee");
+        if (hasBuilderFee !== hasBuilderAddress) {
+          throw new Error("Builder address and fee must both be set or both be absent");
+        }
+      }
       return;
     case "cancel_spot_order_to_subaccount":
       aptosAddress(args[0], "subaccount");
@@ -384,6 +415,26 @@ function emptyOption(value: Uint8Array | undefined, name: string): void {
   if (!value || value.byteLength !== 1 || value[0] !== 0) {
     throw new Error(`${name} is not supported by Flare`);
   }
+}
+
+function optionAddress(value: Uint8Array | undefined, name: string): boolean {
+  if (!value || value.byteLength === 0) throw new Error(`Invalid ${name}`);
+  if (value[0] === 0 && value.byteLength === 1) return false;
+  if (value[0] !== 1 || value.byteLength !== 33) throw new Error(`Invalid ${name}`);
+  aptosAddress(value.slice(1), name);
+  return true;
+}
+
+function optionBuilderFee(value: Uint8Array | undefined, name: string): boolean {
+  if (!value || value.byteLength === 0) throw new Error(`Invalid ${name}`);
+  if (value[0] === 0 && value.byteLength === 1) return false;
+  if (value[0] !== 1 || value.byteLength !== 9) throw new Error(`Invalid ${name}`);
+  unsignedInteger(value.slice(1), 8, name, true);
+  const feeUnits = new DataView(value.buffer, value.byteOffset + 1, 8).getBigUint64(0, true);
+  if (feeUnits > 1000n) {
+    throw new Error(`${name} exceeds maximum allowed builder fee (1000 units / 10 bps)`);
+  }
+  return true;
 }
 
 type ParsedSponsoredTransaction = {

@@ -44,6 +44,7 @@ const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "orderbook",
   "prices",
   "spot/asset_contexts",
+  "subaccounts",
   "trades",
 ]);
 
@@ -55,7 +56,6 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "funding_rate_history",
   "open_orders",
   "order_history",
-  "subaccounts",
   "trade_history",
   "user_fee_rates",
   "withdraw_queue",
@@ -279,7 +279,8 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
     endpoint === "markets" ||
       endpoint === "prices" ||
       endpoint === "asset_contexts" ||
-      endpoint === "spot/asset_contexts"
+      endpoint === "spot/asset_contexts" ||
+      endpoint === "subaccounts"
       ? "public"
       : "private",
   );
@@ -625,12 +626,6 @@ async function authenticateToken(token: string, env: Env): Promise<SessionClaims
 
 function enforceAccountScope(endpoint: string, parameters: URLSearchParams, claims: SessionClaims): void {
   const expectedAccount = claims.subaccount ?? claims.wallet;
-  if (endpoint === "subaccounts") {
-    if (claims.role !== "owner" || !claims.wallet || canonicalAddress(parameters.get("owner") ?? "") !== claims.wallet) {
-      throw new HttpError(403, "Owner scope mismatch");
-    }
-    return;
-  }
   if (endpoint === "delegations") {
     const requested = parameters.get("subaccount");
     if (!claims.subaccount || !requested || canonicalAddress(requested) !== claims.subaccount) {
