@@ -6,6 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 # since previews run with production secrets.
 workers_dev = true
 preview_urls = false
+# The app's address for this testnet Worker. api.mcxross.xyz is kept for the mainnet Worker.
+routes = [{ pattern = "testnet.api.mcxross.xyz", custom_domain = true }]
 
 [vars]
 NETWORK = "testnet"
