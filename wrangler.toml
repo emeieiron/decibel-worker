@@ -1,7 +1,11 @@
-name = "flare-edge"
+name = "decibel-worker"
 main = "src/index.ts"
 compatibility_date = "2026-08-31"
 compatibility_flags = ["nodejs_compat"]
+# The app reaches the Worker at its workers.dev address. Branch builds get no public preview URL,
+# since previews run with production secrets.
+workers_dev = true
+preview_urls = false
 
 [vars]
 NETWORK = "testnet"
