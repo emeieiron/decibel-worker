@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@aptos-labs/ts-sdk": "5.2.1",
     "@cloudflare/vitest-plugin": "1.1.2",
     "@cloudflare/workers-types": "5.20260831.1",
     "@types/node": "26.4.0",
@@ -24,6 +23,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@aptos-labs/ts-sdk": "5.2.1",
     "@noble/hashes": "2.4.0"
   }
 }

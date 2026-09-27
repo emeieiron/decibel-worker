@@ -1,9 +1,18 @@
-import { sha3_256 } from "@noble/hashes/sha3.js";
 import {
-  aptosAddressFromEd25519Bytes,
-  canonicalAddress,
-  verifyEd25519Bytes,
-} from "./security";
+  AccountAddress,
+  Deserializer,
+  EntryFunctionBytes,
+  FeePayerRawTransaction,
+  generateSigningMessage,
+  RawTransactionWithData,
+  TransactionPayloadEntryFunction,
+  type TypeTag,
+  TypeTagStruct,
+  TypeTagVector,
+} from "@aptos-labs/ts-sdk";
+import { sha3_256 } from "@noble/hashes/sha3.js";
+import { canonicalAddress } from "./security";
+import { ownerAddress, parseSenderAuthenticator, verifyOwnerSignature } from "./signers";
 
 export type GasStationRequest = {
   transactionBytes: number[];
@@ -187,9 +196,10 @@ export function externalFeePayerFingerprint(request: GasStationRequest): string 
 
 /**
  * Independently verifies the Kaptos-produced BCS request before a server credential is attached.
- * Flare v1 intentionally accepts only legacy Ed25519, direct entry-function transactions with no
- * secondary signers. Supporting another authenticator or payload requires an explicit parser and
- * policy update rather than weakening this check.
+ * Flare accepts direct entry-function transactions with no secondary signers, signed either by a
+ * legacy Ed25519 account or by a SingleKey account holding a Secp256k1 key. Supporting another
+ * authenticator or payload requires an explicit parser and policy update rather than weakening
+ * this check.
  */
 export function authorizeGasStationRequest(
   request: GasStationRequest,
@@ -201,21 +211,18 @@ export function authorizeGasStationRequest(
 
   const transactionBytes = Uint8Array.from(request.transactionBytes);
   const sender = parseSponsoredTransaction(transactionBytes);
-  const authenticator = parseEd25519Authenticator(Uint8Array.from(request.senderAuth));
+  const signed = parseSenderAuthenticator(Uint8Array.from(request.senderAuth));
   const walletAddress = canonicalAddress(authorization.walletAddress);
 
   if (addressHex(sender.sender) !== walletAddress) {
     throw new Error("Transaction sender does not match the authenticated wallet");
   }
-  if (aptosAddressFromEd25519Bytes(authenticator.publicKey) !== walletAddress) {
+  if (ownerAddress(signed.key) !== walletAddress) {
     throw new Error("Sender authenticator does not match the authenticated wallet");
   }
 
-  const signingSalt = sha3_256.create()
-    .update(Buffer.from(RAW_TRANSACTION_WITH_DATA_SALT, "utf8"))
-    .digest();
-  const signingMessage = Buffer.concat([signingSalt, transactionBytes]);
-  if (!verifyEd25519Bytes(signingMessage, authenticator.publicKey, authenticator.signature)) {
+  const signingMessage = generateSigningMessage(transactionBytes, RAW_TRANSACTION_WITH_DATA_SALT);
+  if (!verifyOwnerSignature(signed, signingMessage)) {
     throw new Error("Sender transaction signature is invalid");
   }
 
@@ -444,10 +451,11 @@ function optionString(value: Uint8Array | undefined, name: string): boolean {
   if (!value || value.byteLength === 0) throw new Error(`Invalid ${name}`);
   if (value[0] === 0 && value.byteLength === 1) return false;
   if (value[0] !== 1) throw new Error(`Invalid ${name}`);
-  const reader = new BcsReader(value.slice(1));
-  const bytes = reader.bytes(128);
-  reader.finished();
+  const deserializer = new Deserializer(value.slice(1));
+  const bytes = deserializer.deserializeBytes();
+  deserializer.assertFinished();
   if (bytes.byteLength === 0) throw new Error(`${name} cannot be empty`);
+  if (bytes.byteLength > 128) throw new Error("BCS byte sequence exceeds the route limit");
   new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   return true;
 }
@@ -489,126 +497,48 @@ type ParsedSponsoredTransaction = {
 };
 
 function parseSponsoredTransaction(bytes: Uint8Array): ParsedSponsoredTransaction {
-  const reader = new BcsReader(bytes);
-  if (reader.uleb128() !== 1) throw new Error("Expected a fee-payer transaction");
-  const sender = reader.fixed(32);
-  reader.fixed(8); // sequence number
-  if (reader.uleb128() !== 2) throw new Error("Only direct entry-function payloads are supported");
-  const packageAddress = reader.fixed(32);
-  const module = reader.identifier();
-  const functionName = reader.identifier();
-  const typeArgumentCount = reader.uleb128();
-  if (typeArgumentCount > 64) throw new Error("Too many transaction type arguments");
-  const typeArguments = Array.from({ length: typeArgumentCount }, () => reader.typeTag(0));
-  const argumentCount = reader.uleb128();
-  if (argumentCount > 64) throw new Error("Too many transaction arguments");
-  const args = Array.from({ length: argumentCount }, () => reader.bytes(64 * 1024));
-  reader.fixed(8); // maximum gas amount
-  reader.fixed(8); // gas unit price
-  reader.fixed(8); // expiration timestamp
-  const chainId = reader.u8();
-  if (reader.uleb128() !== 0) throw new Error("Secondary signers are not supported");
-  const feePayer = reader.fixed(32);
-  if (feePayer.some((byte) => byte !== 0)) {
+  const deserializer = new Deserializer(bytes);
+  const transaction = RawTransactionWithData.deserialize(deserializer);
+  deserializer.assertFinished();
+  if (!(transaction instanceof FeePayerRawTransaction)) throw new Error("Expected a fee-payer transaction");
+  if (transaction.secondary_signer_addresses.length !== 0) throw new Error("Secondary signers are not supported");
+  if (!transaction.fee_payer_address.equals(AccountAddress.ZERO)) {
     throw new Error("External fee-payer address must use the zero placeholder");
   }
-  reader.finished();
+  const raw = transaction.raw_txn;
+  if (!(raw.payload instanceof TransactionPayloadEntryFunction)) {
+    throw new Error("Only direct entry-function payloads are supported");
+  }
+  const entry = raw.payload.entryFunction;
+  if (entry.type_args.length > 64) throw new Error("Too many transaction type arguments");
+  if (entry.args.length > 64) throw new Error("Too many transaction arguments");
+  const args = entry.args.map((argument) => {
+    if (!(argument instanceof EntryFunctionBytes)) throw new Error("Unexpected entry-function argument");
+    const value = argument.value.value;
+    if (value.byteLength > 64 * 1024) throw new Error("BCS byte sequence exceeds the route limit");
+    return value;
+  });
   return {
-    sender,
-    packageAddress,
-    module,
-    function: functionName,
+    sender: raw.sender.toUint8Array(),
+    packageAddress: entry.module_name.address.toUint8Array(),
+    module: entry.module_name.name.identifier,
+    function: entry.function_name.identifier,
     arguments: args,
-    typeArguments,
-    chainId,
+    typeArguments: entry.type_args.map((tag) => typeTagName(tag, 0)),
+    chainId: raw.chain_id.chainId,
   };
 }
 
-function parseEd25519Authenticator(bytes: Uint8Array): {
-  publicKey: Uint8Array;
-  signature: Uint8Array;
-} {
-  const reader = new BcsReader(bytes);
-  if (reader.uleb128() !== 0) throw new Error("Only Ed25519 sender authenticators are supported");
-  const publicKey = reader.bytes(32);
-  const signature = reader.bytes(64);
-  if (publicKey.byteLength !== 32 || signature.byteLength !== 64) {
-    throw new Error("Invalid Ed25519 sender authenticator");
+/** Struct type tags as address::module::name<args> with long addresses; primitives by variant. */
+function typeTagName(tag: TypeTag, depth: number): string {
+  if (depth > 16) throw new Error("Type tag nesting is too deep");
+  if (tag instanceof TypeTagVector) return `vector<${typeTagName(tag.value, depth + 1)}>`;
+  if (tag instanceof TypeTagStruct) {
+    const struct = tag.value;
+    const args = struct.typeArgs.map((arg) => typeTagName(arg, depth + 1));
+    return `${canonicalAddress(struct.address.toStringLong())}::${struct.moduleName.identifier}::${struct.name.identifier}${args.length ? `<${args.join(",")}>` : ""}`;
   }
-  reader.finished();
-  return { publicKey, signature };
-}
-
-class BcsReader {
-  private offset = 0;
-
-  constructor(private readonly input: Uint8Array) {}
-
-  u8(): number {
-    if (this.offset >= this.input.byteLength) throw new Error("Truncated BCS value");
-    return this.input[this.offset++];
-  }
-
-  fixed(length: number): Uint8Array {
-    if (!Number.isSafeInteger(length) || length < 0 || this.offset + length > this.input.byteLength) {
-      throw new Error("Truncated BCS value");
-    }
-    const value = this.input.slice(this.offset, this.offset + length);
-    this.offset += length;
-    return value;
-  }
-
-  uleb128(): number {
-    let result = 0;
-    let shift = 0;
-    for (let index = 0; index < 5; index += 1) {
-      const byte = this.u8();
-      const digit = byte & 0x7f;
-      if (shift === 28 && digit > 0x0f) throw new Error("BCS ULEB128 value exceeds u32");
-      result += digit * 2 ** shift;
-      if ((byte & 0x80) === 0) {
-        if (index > 0 && digit === 0) throw new Error("Non-canonical BCS ULEB128 value");
-        return result;
-      }
-      shift += 7;
-    }
-    throw new Error("BCS ULEB128 value exceeds u32");
-  }
-
-  bytes(maximumLength: number): Uint8Array {
-    const length = this.uleb128();
-    if (length > maximumLength) throw new Error("BCS byte sequence exceeds the route limit");
-    return this.fixed(length);
-  }
-
-  identifier(): string {
-    const value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(this.bytes(128));
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error("Invalid Move identifier");
-    return value;
-  }
-
-  typeTag(depth: number): string {
-    if (depth > 16) throw new Error("Type tag nesting is too deep");
-    const variant = this.uleb128();
-    if (variant === 6) {
-      return `vector<${this.typeTag(depth + 1)}>`;
-    }
-    if (variant === 7) {
-      const address = addressHex(this.fixed(32));
-      const module = this.identifier();
-      const name = this.identifier();
-      const length = this.uleb128();
-      if (length > 64) throw new Error("Too many struct type arguments");
-      const arguments_ = Array.from({ length }, () => this.typeTag(depth + 1));
-      return `${address}::${module}::${name}${length ? `<${arguments_.join(",")}>` : ""}`;
-    }
-    if (variant > 16) throw new Error("Unsupported transaction type tag");
-    return `primitive:${variant}`;
-  }
-
-  finished(): void {
-    if (this.offset !== this.input.byteLength) throw new Error("Trailing bytes in BCS value");
-  }
+  return `primitive:${tag.toString()}`;
 }
 
 function addressHex(bytes: Uint8Array): string {

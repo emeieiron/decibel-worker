@@ -1,6 +1,5 @@
 import { isAllowedAptosReadPath } from "./routes";
 import {
-  aptosAddressFromEd25519,
   buildChallenge,
   canonicalAddress,
   CHALLENGE_TTL_MS,
@@ -8,9 +7,9 @@ import {
   parseChallenge,
   randomHex,
   SESSION_TTL_SECONDS,
-  verifyEd25519,
   verifySessionToken,
 } from "./security";
+import { hexBytes, ownerAddress, ownerKey, ownerSignature, type OwnerSignature, verifyOwnerSignature } from "./signers";
 import { FlareState } from "./state";
 import {
   authorizeGasStationRequest,
@@ -176,8 +175,18 @@ async function createAuthenticatedSession(request: Request, env: Env): Promise<R
     throw new HttpError(401, "Challenge mismatch");
   }
 
-  const signer = aptosAddressFromEd25519(body.publicKey);
-  if (signer !== fields.walletAddress || !verifyEd25519(body.challenge, body.publicKey, body.signature)) {
+  // Ed25519 and Secp256k1 owners both sign the challenge text; the key's length says which.
+  let signed: OwnerSignature;
+  try {
+    const publicKey = hexBytes(body.publicKey);
+    const signature = hexBytes(body.signature);
+    if (!publicKey || !signature) throw new Error("Invalid key or signature");
+    signed = ownerSignature(ownerKey(publicKey), signature);
+  } catch {
+    throw new HttpError(401, "Signature or wallet address is invalid");
+  }
+  const signer = ownerAddress(signed.key);
+  if (signer !== fields.walletAddress || !verifyOwnerSignature(signed, new TextEncoder().encode(body.challenge))) {
     throw new HttpError(401, "Signature or wallet address is invalid");
   }
 
