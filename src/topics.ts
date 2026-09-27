@@ -24,6 +24,8 @@ const CANDLE_INTERVALS = new Set([
   "1h",
   "2h",
   "4h",
+  "8h",
+  "12h",
   "1d",
   "1w",
   "1mo",

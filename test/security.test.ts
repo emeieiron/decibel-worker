@@ -166,6 +166,9 @@ describe("WebSocket topic allowlist", () => {
     expect(() => validateTopic(`depth:${account}:10`, anonymous)).not.toThrow();
     expect(() => validateTopic(`trades:${account}`, anonymous)).not.toThrow();
     expect(() => validateTopic(`market_candlestick:${account}:4h`, anonymous)).not.toThrow();
+    expect(() => validateTopic(`market_candlestick:${account}:12h`, anonymous)).not.toThrow();
+    expect(() => validateTopic(`market_candlestick:${account}:6h`, anonymous))
+      .toThrow("Invalid candlestick interval");
   });
 
   it("rejects extra market topic segments", () => {
