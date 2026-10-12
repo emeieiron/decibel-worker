@@ -31,7 +31,7 @@ npm run dev
 
 `.dev.vars` must define `DECIBEL_NODE_API_KEY` and a `SESSION_SIGNING_KEY` with at least 32 random bytes. Set `GAS_STATION_API_KEY` to enable sponsorship; this is a separate **Geomi Gas Station resource key**, not the node API key. Never commit `.dev.vars`.
 
-An absent or blank Gas Station key returns HTTP 503 with `code=gas_station_not_configured` without submitting a new transaction. Previously submitted or pending fingerprints are still resolved first. An upstream 401 returns HTTP 503 with `code=gas_station_credentials_rejected` after releasing its reservation. Neither invalidates the mobile wallet session. Clients may offer explicit self-pay for those two codes; a generic 503 or transport failure remains uncertain and must not trigger resubmission.
+An absent or blank Gas Station key returns HTTP 503 with `code=gas_station_not_configured` without submitting a new transaction. Previously submitted or pending fingerprints are still resolved first. An upstream 401 returns HTTP 503 with `code=gas_station_credentials_rejected` after releasing its reservation. A transaction outside the sponsorship policy (function, module, role, subaccount, asset, or argument checks) returns HTTP 403 with `code=gas_station_transaction_not_allowed` before anything is reserved or submitted. None of these invalidates the mobile wallet session. Clients may offer explicit self-pay for those three codes; a generic 503 or transport failure remains uncertain and must not trigger resubmission.
 
 For local development, pipe each value into the helper so it is never placed in shell history:
 

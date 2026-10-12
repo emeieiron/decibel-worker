@@ -43,6 +43,8 @@ const OWNER_FUNCTIONS = new Set([
   "revoke_max_builder_fee_for_subaccount",
   "contribute_to_vault",
   "redeem_from_vault",
+  "approve_max_spot_builder_fee_for_subaccount",
+  "revoke_max_spot_builder_fee_for_subaccount",
 ]);
 const TRADING_FUNCTIONS = new Set([
   "configure_user_settings_for_market",
@@ -55,9 +57,11 @@ const TRADING_FUNCTIONS = new Set([
   "place_twap_order_to_subaccount_v2",
   "cancel_twap_orders_to_subaccount",
 ]);
-const SPOT_TRADING_FUNCTIONS = new Set([
+const SPOT_MODULE_FUNCTIONS = new Set([
   "place_spot_order_to_subaccount",
   "cancel_spot_order_to_subaccount",
+  "approve_max_spot_builder_fee_for_subaccount",
+  "revoke_max_spot_builder_fee_for_subaccount",
 ]);
 const FUNDING_FUNCTIONS = new Set([
   "deposit_to_subaccount_at",
@@ -73,6 +77,8 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["revoke_delegation", 2],
   ["approve_max_builder_fee_for_subaccount", 3],
   ["revoke_max_builder_fee_for_subaccount", 2],
+  ["approve_max_spot_builder_fee_for_subaccount", 3],
+  ["revoke_max_spot_builder_fee_for_subaccount", 2],
   ["configure_user_settings_for_market", 4],
   ["place_order_to_subaccount", 15],
   ["cancel_order_to_subaccount", 3],
@@ -144,7 +150,7 @@ function authorizeDecibelCall(
   if (sender.typeArguments.length !== 0) {
     throw new Error("Decibel transactions do not accept type arguments");
   }
-  const expectedModule = SPOT_TRADING_FUNCTIONS.has(sender.function)
+  const expectedModule = SPOT_MODULE_FUNCTIONS.has(sender.function)
     ? DECIBEL_SPOT_MODULE
     : DECIBEL_PERP_MODULE;
   if (addressHex(sender.packageAddress) !== canonicalAddress(authorization.decibelPackageAddress) ||
@@ -264,7 +270,8 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "delegate");
       return;
-    case "approve_max_builder_fee_for_subaccount": {
+    case "approve_max_builder_fee_for_subaccount":
+    case "approve_max_spot_builder_fee_for_subaccount": {
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "builder address");
       unsignedInteger(args[2], 8, "max fee", true);
@@ -275,6 +282,7 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       return;
     }
     case "revoke_max_builder_fee_for_subaccount":
+    case "revoke_max_spot_builder_fee_for_subaccount":
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "builder address");
       return;

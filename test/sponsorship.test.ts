@@ -36,7 +36,7 @@ async function fixture(key?: string) {
     SESSIONS: namespace(async () => Response.json(claims)), SPONSORSHIPS: namespace(stateFetch),
     AUTHENTICATED_RATE_LIMITER: limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
   } as unknown as Env;
-  const send = () => worker.fetch(new Request("https://worker/gas/sponsor/owner", {
+  const send = (route = "owner") => worker.fetch(new Request(`https://worker/gas/sponsor/${route}`, {
     method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(signed.request),
   }), env);
@@ -87,5 +87,17 @@ describe("sponsorship submission outcomes", () => {
     f.env.GAS_STATION_API_KEY = undefined;
     expect(await (await f.send()).json()).toEqual({ transactionHash: hash });
     expect(upstream).toHaveBeenCalledOnce();
+  });
+  it("rejects a transaction outside the route allowlist with a stable code before reserving", async () => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const f = await fixture("test-only-key");
+    const response = await f.send("trading");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "gas_station_transaction_not_allowed",
+      error: "Entry function is outside the sponsorship route allowlist",
+    });
+    expect(f.stateFetch).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
   });
 });

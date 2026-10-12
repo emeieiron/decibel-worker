@@ -508,6 +508,55 @@ describe("Gas Station request allowlist", () => {
     })).not.toThrow();
   });
 
+  it("authorizes spot builder-fee approval and revocation only on the owner route", () => {
+    const spot = (functionName: string, args: number[][], overrides: { module?: string; packageAddress?: string } = {}) =>
+      sponsoredFixture({ module: "dex_accounts_spot_entry", functionName, arguments: args, ...overrides });
+    const approveArgs = [addressBytes("0x22"), addressBytes("0x99"), u64(500n)];
+    const revokeArgs = [addressBytes("0x22"), addressBytes("0x99")];
+    const owner = (walletAddress: string) => ({
+      walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: true,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    });
+    for (const [name, args] of [
+      ["approve_max_spot_builder_fee_for_subaccount", approveArgs],
+      ["revoke_max_spot_builder_fee_for_subaccount", revokeArgs],
+    ] as const) {
+      const valid = spot(name, [...args]);
+      expect(() => authorizeGasStationRequest(valid.request, owner(valid.walletAddress))).not.toThrow();
+      expect(() => authorizeGasStationRequest(valid.request, { ...owner(valid.walletAddress), ownerOnly: false }))
+        .toThrow("Entry function is outside the sponsorship route allowlist");
+      expect(() => authorizeGasStationRequest(valid.request, { ...owner(valid.walletAddress), subaccount: "0x23" }))
+        .toThrow("Transaction subaccount does not match the session scope");
+
+      const extra = spot(name, [...args, [0]]);
+      expect(() => authorizeGasStationRequest(extra.request, owner(extra.walletAddress)))
+        .toThrow("Entry-function argument count does not match the Flare contract");
+      const missing = spot(name, args.slice(0, -1));
+      expect(() => authorizeGasStationRequest(missing.request, owner(missing.walletAddress)))
+        .toThrow("Entry-function argument count does not match the Flare contract");
+
+      const perpModule = spot(name, [...args], { module: "dex_accounts_entry" });
+      expect(() => authorizeGasStationRequest(perpModule.request, owner(perpModule.walletAddress)))
+        .toThrow("Transaction is outside the Decibel package allowlist");
+      const otherPackage = spot(name, [...args], { packageAddress: "0x" + "ab".repeat(32) });
+      expect(() => authorizeGasStationRequest(otherPackage.request, owner(otherPackage.walletAddress)))
+        .toThrow("Transaction is outside the Decibel package allowlist");
+    }
+
+    const perpNameInSpot = spot("approve_max_builder_fee_for_subaccount", [...approveArgs]);
+    expect(() => authorizeGasStationRequest(perpNameInSpot.request, owner(perpNameInSpot.walletAddress)))
+      .toThrow("Transaction is outside the Decibel package allowlist");
+    const excessive = spot("approve_max_spot_builder_fee_for_subaccount", [approveArgs[0], approveArgs[1], u64(1001n)]);
+    expect(() => authorizeGasStationRequest(excessive.request, owner(excessive.walletAddress)))
+      .toThrow("Max builder fee exceeds maximum allowed");
+    const zero = spot("approve_max_spot_builder_fee_for_subaccount", [approveArgs[0], approveArgs[1], u64(0n)]);
+    expect(() => authorizeGasStationRequest(zero.request, owner(zero.walletAddress))).toThrow("must be positive");
+  });
+
   it("rejects leverage outside the documented range", () => {
     const fixture = sponsoredFixture({
       functionName: "configure_user_settings_for_market",
