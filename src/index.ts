@@ -35,6 +35,7 @@ export { FlareState };
 
 const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "asset_contexts",
+  "campaigns/active",
   "candlesticks",
   "contract_specs",
   "contracts",
@@ -66,6 +67,9 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "withdraw_queue",
   "points/amps",
   "points/amps/daily",
+  "campaigns/account",
+  "campaign_locks",
+  "protected_trials",
 ]);
 
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
