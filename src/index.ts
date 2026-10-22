@@ -35,6 +35,7 @@ export { FlareState };
 
 const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "asset_contexts",
+  "campaigns/active",
   "candlesticks",
   "contract_specs",
   "contracts",
@@ -66,6 +67,9 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "withdraw_queue",
   "points/amps",
   "points/amps/daily",
+  "campaigns/account",
+  "campaign_locks",
+  "protected_trials",
 ]);
 
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -351,7 +355,7 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
       usdcMetadataAddress: env.USDC_METADATA_ADDRESS,
     });
   } catch (error) {
-    throw new HttpError(403, safeMessage(error));
+    return sponsorshipNotAllowed(safeMessage(error));
   }
   const fingerprint = externalFeePayerFingerprint(body);
   const sponsorship = stateStub(env.SPONSORSHIPS, fingerprint);
@@ -459,6 +463,14 @@ function sponsorshipUnavailable(
   return Response.json(
     { error: "Gas sponsorship is unavailable. You can choose to pay gas with APT.", code },
     { status: 503, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/** Rejected by policy before anything is reserved or submitted, so self-pay is safe. */
+function sponsorshipNotAllowed(reason: string): Response {
+  return Response.json(
+    { error: reason, code: "gas_station_transaction_not_allowed" },
+    { status: 403, headers: { "Cache-Control": "no-store" } },
   );
 }
 
