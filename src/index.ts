@@ -9,6 +9,7 @@ import {
   SESSION_TTL_SECONDS,
   verifySessionToken,
 } from "./security";
+import { isSessionAccount, referralAccountPrefix } from "./scope";
 import { hexBytes, ownerAddress, ownerKey, ownerSignature, type OwnerSignature, verifyOwnerSignature } from "./signers";
 import { FlareState } from "./state";
 import {
@@ -74,6 +75,7 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "campaigns/account",
   "campaign_locks",
   "protected_trials",
+  "referrals/users",
 ]);
 
 /** Account endpoints scoped by an `owner` parameter rather than an `account` one. */
@@ -286,9 +288,11 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const endpoint = url.pathname.slice("/decibel/api/v1/".length);
   const isPublicReferral = endpoint.startsWith("referrals/code/");
+  const isReferralAccount = referralAccountPrefix(endpoint) !== undefined;
   const isAllowed =
     PUBLIC_DECIBEL_ENDPOINTS.has(endpoint) ||
     ACCOUNT_DECIBEL_ENDPOINTS.has(endpoint) ||
+    isReferralAccount ||
     isPublicReferral;
   if (!endpoint || !isAllowed) {
     throw new HttpError(404, "Decibel route is not allowlisted");
@@ -298,7 +302,7 @@ async function proxyDecibelRest(request: Request, env: Env): Promise<Response> {
 
   if (PUBLIC_DECIBEL_ENDPOINTS.has(endpoint) || isPublicReferral) {
     // Public market data is available to every valid Flare session.
-  } else if (ACCOUNT_DECIBEL_ENDPOINTS.has(endpoint)) {
+  } else if (ACCOUNT_DECIBEL_ENDPOINTS.has(endpoint) || isReferralAccount) {
     if (claims.role === "anonymous") throw new HttpError(403, "Wallet session required");
     enforceAccountScope(endpoint, url.searchParams, claims);
   } else {
@@ -664,24 +668,35 @@ async function authenticateToken(token: string, env: Env): Promise<SessionClaims
   return claims;
 }
 
-function enforceAccountScope(endpoint: string, parameters: URLSearchParams, claims: SessionClaims): void {
+export function enforceAccountScope(endpoint: string, parameters: URLSearchParams, claims: SessionClaims): void {
   const expectedAccount = claims.subaccount ?? claims.wallet;
   if (endpoint === "delegations") {
-    const requested = parameters.get("subaccount");
-    if (!claims.subaccount || !requested || canonicalAddress(requested) !== claims.subaccount) {
+    if (!isSessionAccount(parameters.get("subaccount"), claims.subaccount)) {
       throw new HttpError(403, "Subaccount scope mismatch");
     }
     return;
   }
   if (OWNER_SCOPED_ENDPOINTS.has(endpoint)) {
-    const owner = parameters.get("owner");
-    if (!claims.wallet || !owner || canonicalAddress(owner) !== claims.wallet) {
+    if (!isSessionAccount(parameters.get("owner"), claims.wallet)) {
       throw new HttpError(403, "Owner scope mismatch");
     }
     return;
   }
-  const account = parameters.get("account");
-  if (!expectedAccount || !account || canonicalAddress(account) !== expectedAccount) {
+  const referralPrefix = referralAccountPrefix(endpoint);
+  if (referralPrefix) {
+    // The account is the whole of the rest of the path, so a further segment cannot match.
+    if (!isSessionAccount(endpoint.slice(referralPrefix.length), claims.wallet)) {
+      throw new HttpError(403, "Owner scope mismatch");
+    }
+    return;
+  }
+  if (endpoint === "referrals/users") {
+    if (!isSessionAccount(parameters.get("referrer_account"), claims.wallet)) {
+      throw new HttpError(403, "Owner scope mismatch");
+    }
+    return;
+  }
+  if (!isSessionAccount(parameters.get("account"), expectedAccount)) {
     throw new HttpError(403, "Account scope mismatch");
   }
 }
