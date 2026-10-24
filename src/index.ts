@@ -42,6 +42,8 @@ const PUBLIC_DECIBEL_ENDPOINTS = new Set([
   "dex",
   "markets",
   "orderbook",
+  "points/global",
+  "points_leaderboard",
   "prices",
   "spot/asset_contexts",
   "subaccounts",
@@ -67,9 +69,19 @@ const ACCOUNT_DECIBEL_ENDPOINTS = new Set([
   "withdraw_queue",
   "points/amps",
   "points/amps/daily",
+  "points/tier",
+  "streaks/account",
   "campaigns/account",
   "campaign_locks",
   "protected_trials",
+]);
+
+/** Account endpoints scoped by an `owner` parameter rather than an `account` one. */
+const OWNER_SCOPED_ENDPOINTS = new Set([
+  "points/amps",
+  "points/amps/daily",
+  "points/tier",
+  "streaks/account",
 ]);
 
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -661,7 +673,7 @@ function enforceAccountScope(endpoint: string, parameters: URLSearchParams, clai
     }
     return;
   }
-  if (endpoint === "points/amps" || endpoint === "points/amps/daily") {
+  if (OWNER_SCOPED_ENDPOINTS.has(endpoint)) {
     const owner = parameters.get("owner");
     if (!claims.wallet || !owner || canonicalAddress(owner) !== claims.wallet) {
       throw new HttpError(403, "Owner scope mismatch");
