@@ -43,6 +43,7 @@ const OWNER_FUNCTIONS = new Set([
   "revoke_max_builder_fee_for_subaccount",
   "contribute_to_vault",
   "redeem_from_vault",
+  "transfer_assets_between_non_collateral_and_collateral",
   "approve_max_spot_builder_fee_for_subaccount",
   "revoke_max_spot_builder_fee_for_subaccount",
 ]);
@@ -90,6 +91,7 @@ const EXPECTED_ARGUMENT_COUNTS = new Map<string, number>([
   ["cancel_twap_orders_to_subaccount", 3],
   ["contribute_to_vault", 4],
   ["redeem_from_vault", 3],
+  ["transfer_assets_between_non_collateral_and_collateral", 3],
 ]);
 
 /** Strictly narrows the public route to the Aptos Gas Station sign-and-submit operation. */
@@ -406,6 +408,12 @@ function validateFunctionArguments(functionName: string, args: Uint8Array[]): vo
       aptosAddress(args[2], "asset metadata");
       unsignedInteger(args[3], 8, "contribution amount", true);
       return;
+    case "transfer_assets_between_non_collateral_and_collateral":
+      aptosAddress(args[0], "subaccount");
+      aptosAddress(args[1], "asset metadata");
+      // Signed: positive pledges the asset as collateral, negative releases it.
+      signedInteger(args[2], 8, "collateral amount");
+      return;
     case "redeem_from_vault":
       aptosAddress(args[0], "subaccount");
       aptosAddress(args[1], "vault");
@@ -440,6 +448,12 @@ function unsignedInteger(
   if (requirePositive && value.every((byte) => byte === 0)) {
     throw new Error(`${name} must be positive`);
   }
+}
+
+/** A two's-complement integer of [byteLength] bytes. Any sign is valid; zero moves nothing. */
+function signedInteger(value: Uint8Array | undefined, byteLength: number, name: string): void {
+  if (!value || value.byteLength !== byteLength) throw new Error(`Invalid ${name}`);
+  if (value.every((byte) => byte === 0)) throw new Error(`${name} must not be zero`);
 }
 
 function optionFixed(

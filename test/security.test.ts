@@ -398,6 +398,49 @@ describe("Gas Station request allowlist", () => {
     })).toThrow("Entry function is outside the sponsorship route allowlist");
   });
 
+  it("sponsors a collateral pledge, in either direction and on a non-USDC asset", () => {
+    const shareAsset = `0x${"d1".repeat(32)}`;
+    const pledge = sponsoredFixture({
+      functionName: "transfer_assets_between_non_collateral_and_collateral",
+      // Positive pledges: 5_000_000 as eight little-endian bytes.
+      arguments: [addressBytes("0x22"), addressBytes(shareAsset), u64(5_000_000n)],
+    });
+    const ownerAuth = {
+      walletAddress: pledge.walletAddress,
+      subaccount: "0x22",
+      network: "testnet" as const,
+      ownerOnly: true,
+      decibelPackageAddress: DECIBEL_PACKAGE,
+      usdcMetadataAddress: USDC_METADATA,
+    };
+    // The asset is vault shares, not USDC: this call is deliberately not a funding route.
+    expect(() => authorizeGasStationRequest(pledge.request, ownerAuth)).not.toThrow();
+
+    // Releasing is the same call with a negative amount, which is two's complement.
+    const release = sponsoredFixture({
+      functionName: "transfer_assets_between_non_collateral_and_collateral",
+      arguments: [addressBytes("0x22"), addressBytes(shareAsset), u64(0xffffffffffb3b4c0n)],
+    });
+    expect(() => authorizeGasStationRequest(release.request, {
+      ...ownerAuth,
+      walletAddress: release.walletAddress,
+    })).not.toThrow();
+
+    // Zero moves nothing, so it is refused rather than sponsored.
+    const zero = sponsoredFixture({
+      functionName: "transfer_assets_between_non_collateral_and_collateral",
+      arguments: [addressBytes("0x22"), addressBytes(shareAsset), u64(0n)],
+    });
+    expect(() => authorizeGasStationRequest(zero.request, {
+      ...ownerAuth,
+      walletAddress: zero.walletAddress,
+    })).toThrow("collateral amount must not be zero");
+
+    // It stays an owner route; a trading session cannot sponsor it.
+    expect(() => authorizeGasStationRequest(pledge.request, { ...ownerAuth, ownerOnly: false }))
+      .toThrow("Entry function is outside the sponsorship route allowlist");
+  });
+
   it("rejects shifted TP/SL option slots", () => {
     const fixture = sponsoredFixture({
       functionName: "place_tp_sl_order_for_position",
