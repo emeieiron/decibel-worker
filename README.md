@@ -50,12 +50,12 @@ The remaining local diagnostic matches the open
 [workerd WebSocketPair disconnect issue](https://github.com/cloudflare/workerd/issues/5290).
 It does not appear during a normal close and must not be treated as evidence that
 the client failed to reconnect or backfill. Verify abrupt-disconnect behavior once
-against a deployed testnet Worker before a release because the local runtime cannot
+against the deployed Worker before a release because the local runtime cannot
 currently provide a clean signal for this case.
 
 ## Deployment
 
-Review every non-secret variable in `wrangler.toml` for the selected network. `NETWORK`, Decibel/Aptos origins, `DECIBEL_PACKAGE_ADDRESS`, and `USDC_METADATA_ADDRESS` must describe the same immutable deployment.
+This Worker is mainnet-only: it serves Decibel on Aptos mainnet and has no testnet mode. `NETWORK` is pinned to `mainnet`, `parseChallenge` rejects a challenge signed for any other network, and only chain id 1 is sponsored. Review every non-secret variable in `wrangler.toml` before deploying: the Decibel and Aptos origins, `DECIBEL_PACKAGE_ADDRESS` and `USDC_METADATA_ADDRESS` must all describe the same immutable mainnet deployment.
 
 Create secrets with Wrangler:
 
@@ -66,6 +66,8 @@ npx wrangler secret put SESSION_SIGNING_KEY
 npm run deploy
 ```
 
-Use separate Worker deployments and secrets for testnet and mainnet. Do not turn a testnet deployment into mainnet by changing only one URL.
+The node key and the Gas Station resource key are per-network, so a deployment needs its own mainnet credentials; rotate `SESSION_SIGNING_KEY` whenever the deployment's scope changes, since that is what invalidates sessions already issued.
+
+Note that `npm run dev` reads the same `[vars]`, so a local Worker proxies mainnet. Keep the mainnet Gas Station key out of `.dev.vars` unless you intend to sponsor real transactions.
 
 The v1 WebSocket bridge deliberately maintains one outgoing connection per mobile connection. Durable Object WebSocket hibernation does not apply to outgoing sockets, so reconnect and REST backfill remain client responsibilities.
