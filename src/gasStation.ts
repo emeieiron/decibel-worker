@@ -23,12 +23,13 @@ export type GasStationRequest = {
 export type GasStationAuthorization = {
   walletAddress: string;
   subaccount?: string;
-  network: "testnet" | "mainnet";
   ownerOnly: boolean;
   decibelPackageAddress: string;
   usdcMetadataAddress: string;
 };
 
+/** Aptos mainnet. A transaction signed for another chain is not ours to sponsor. */
+const APTOS_MAINNET_CHAIN_ID = 1;
 const RAW_TRANSACTION_WITH_DATA_SALT = "APTOS::RawTransactionWithData";
 const DECIBEL_PERP_MODULE = "dex_accounts_entry";
 const DECIBEL_SPOT_MODULE = "dex_accounts_spot_entry";
@@ -234,8 +235,7 @@ export function authorizeGasStationRequest(
     throw new Error("Sender transaction signature is invalid");
   }
 
-  const expectedChainId = authorization.network === "mainnet" ? 1 : 2;
-  if (sender.chainId !== expectedChainId) throw new Error("Transaction network mismatch");
+  if (sender.chainId !== APTOS_MAINNET_CHAIN_ID) throw new Error("Transaction network mismatch");
   if (isOwnerUsdcTransfer(sender)) {
     authorizeOwnerUsdcTransfer(sender, authorization);
   } else {

@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllGlobals());
 async function fixture(key?: string) {
   const signed = sponsoredFixture({ functionName: "create_new_subaccount", arguments: [] });
   const now = Math.floor(Date.now() / 1000);
-  const claims = { iat: now, exp: now + 3600, jti: "11".repeat(16), network: "testnet" as const,
+  const claims = { iat: now, exp: now + 3600, jti: "11".repeat(16), network: "mainnet" as const,
     role: "owner" as const, wallet: signed.walletAddress };
   const signingKey = "test-session-key-with-more-than-thirty-two-bytes";
   const token = await issueSessionToken(claims, signingKey);
@@ -30,9 +30,9 @@ async function fixture(key?: string) {
   const namespace = (fetch: unknown) => ({ idFromName: (name: string) => name, get: () => ({ fetch }) });
   const limiter = { limit: async () => ({ success: true }) };
   const env = {
-    NETWORK: "testnet", APP_ORIGIN: "flare://mobile", SESSION_SIGNING_KEY: signingKey,
+    NETWORK: "mainnet", APP_ORIGIN: "flare://mobile", SESSION_SIGNING_KEY: signingKey,
     DECIBEL_PACKAGE_ADDRESS: DECIBEL_PACKAGE, USDC_METADATA_ADDRESS: USDC_METADATA,
-    GAS_STATION_ORIGIN: "https://api.testnet.aptoslabs.com/gs/v1", GAS_STATION_API_KEY: key,
+    GAS_STATION_ORIGIN: "https://api.mainnet.aptoslabs.com/gs/v1", GAS_STATION_API_KEY: key,
     SESSIONS: namespace(async () => Response.json(claims)), SPONSORSHIPS: namespace(stateFetch),
     AUTHENTICATED_RATE_LIMITER: limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
   } as unknown as Env;
@@ -72,7 +72,7 @@ describe("sponsorship submission outcomes", () => {
   it("journals successful sponsorship and returns the same hash without resubmitting", async () => {
     const hash = "0x" + "22".repeat(32);
     const upstream = vi.fn(async (url: URL, init: RequestInit) => {
-      expect(url.toString()).toBe("https://api.testnet.aptoslabs.com/gs/v1/api/transaction/signAndSubmit");
+      expect(url.toString()).toBe("https://api.mainnet.aptoslabs.com/gs/v1/api/transaction/signAndSubmit");
       expect(new Headers(init.headers).get("Authorization")).toBe("Bearer test-only-key");
       const body = JSON.parse(init.body as string);
       const transaction = SimpleTransaction.deserialize(new Deserializer(Uint8Array.from(body.transactionBytes)));

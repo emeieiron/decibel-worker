@@ -361,7 +361,6 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     submissionBody = authorizeGasStationRequest(body, {
       walletAddress: claims.wallet ?? "",
       subaccount: claims.subaccount,
-      network: claims.network,
       ownerOnly,
       decibelPackageAddress: env.DECIBEL_PACKAGE_ADDRESS,
       usdcMetadataAddress: env.USDC_METADATA_ADDRESS,
@@ -687,7 +686,6 @@ function enforceAccountScope(endpoint: string, parameters: URLSearchParams, clai
 }
 
 async function enforceSessionRateLimit(claims: SessionClaims, env: Env): Promise<void> {
-  if (env.NETWORK === "testnet") return;
   const limiter = claims.role === "anonymous" ? env.ANONYMOUS_RATE_LIMITER : env.AUTHENTICATED_RATE_LIMITER;
   const key = claims.role === "anonymous" ? claims.jti : `${claims.wallet}:${claims.subaccount ?? "primary"}`;
   const result = await limiter.limit({ key });

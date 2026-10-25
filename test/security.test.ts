@@ -30,7 +30,7 @@ const SIGNING_KEY = "test-session-key-with-more-than-thirty-two-bytes";
 describe("FLARE_AUTH_V1", () => {
   it("round-trips a canonical challenge", () => {
     const challenge = buildChallenge({
-      network: "testnet",
+      network: "mainnet",
       origin: "flare://mobile",
       walletAddress: "0x1",
       subaccount: "0x2",
@@ -40,7 +40,7 @@ describe("FLARE_AUTH_V1", () => {
     });
 
     expect(parseChallenge(challenge)).toEqual({
-      network: "testnet",
+      network: "mainnet",
       origin: "flare://mobile",
       walletAddress: canonicalAddress("0x1"),
       subaccount: canonicalAddress("0x2"),
@@ -50,12 +50,27 @@ describe("FLARE_AUTH_V1", () => {
     });
   });
 
+  it("refuses a challenge for another network", () => {
+    const challenge = [
+      "FLARE_AUTH_V1",
+      "network=testnet",
+      "origin=flare://mobile",
+      `wallet_address=${canonicalAddress("0x1")}`,
+      "subaccount=",
+      `nonce=${"ab".repeat(32)}`,
+      "issued_at=1000",
+      "expires_at=301000",
+    ].join("\n");
+
+    expect(() => parseChallenge(challenge)).toThrow("Invalid network");
+  });
+
   it("verifies Ed25519 signatures and derives the Aptos authentication key", () => {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const publicDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
     const rawPublicKey = toHex(publicDer.subarray(publicDer.length - 32));
     const challenge = buildChallenge({
-      network: "testnet",
+      network: "mainnet",
       origin: "flare://mobile",
       walletAddress: aptosAddressFromEd25519(rawPublicKey),
       nonce: "cd".repeat(32),
@@ -79,7 +94,7 @@ describe("session tokens", () => {
       iat: 1_000,
       exp: 4_300,
       jti: "01".repeat(16),
-      network: "testnet" as const,
+      network: "mainnet" as const,
       role: "owner" as const,
       wallet: canonicalAddress("0x1"),
     };
@@ -94,7 +109,7 @@ describe("session tokens", () => {
       iat: 1_000,
       exp: 1_001,
       jti: "02".repeat(16),
-      network: "testnet",
+      network: "mainnet",
       role: "anonymous",
     }, SIGNING_KEY);
 
@@ -150,7 +165,7 @@ describe("WebSocket topic allowlist", () => {
     iat: 1_000,
     exp: 4_300,
     jti: "03".repeat(16),
-    network: "testnet" as const,
+    network: "mainnet" as const,
     role: "anonymous" as const,
   };
   const account = canonicalAddress("0x22");
@@ -205,7 +220,7 @@ describe("Gas Station request allowlist", () => {
   it("binds sponsorship recovery to the submitting session identity", () => {
     const record = {
       fingerprint: `0x${"ab".repeat(32)}`,
-      network: "testnet" as const,
+      network: "mainnet" as const,
       role: "api" as const,
       subaccount: canonicalAddress("0x22"),
       status: "pending" as const,
@@ -213,7 +228,7 @@ describe("Gas Station request allowlist", () => {
       wallet: canonicalAddress("0x11"),
     };
     const session = {
-      network: "testnet" as const,
+      network: "mainnet" as const,
       role: "api" as const,
       subaccount: canonicalAddress("0x22"),
       wallet: canonicalAddress("0x11"),
@@ -230,7 +245,7 @@ describe("Gas Station request allowlist", () => {
       subaccount: canonicalAddress("0x44"),
     })).toBe(false);
     expect(sponsorshipRecordMatchesSession(record, {
-      network: "testnet",
+      network: "mainnet",
       role: "anonymous",
     })).toBe(false);
   });
@@ -281,7 +296,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -313,7 +327,7 @@ describe("Gas Station request allowlist", () => {
     const authorization = {
       walletAddress: accepted.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -373,7 +387,7 @@ describe("Gas Station request allowlist", () => {
     const ownerAuth = {
       walletAddress: approve.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -408,7 +422,7 @@ describe("Gas Station request allowlist", () => {
     const ownerAuth = {
       walletAddress: pledge.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -461,7 +475,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -476,7 +489,7 @@ describe("Gas Station request allowlist", () => {
     const authorization = {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -496,7 +509,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -522,7 +534,7 @@ describe("Gas Station request allowlist", () => {
     const authorization = {
       walletAddress: acceptedPlace.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -559,7 +571,7 @@ describe("Gas Station request allowlist", () => {
     const owner = (walletAddress: string) => ({
       walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -609,7 +621,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -625,7 +636,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -641,7 +651,6 @@ describe("Gas Station request allowlist", () => {
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
       subaccount: "0x22",
-      network: "testnet",
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -668,7 +677,7 @@ describe("Gas Station request allowlist", () => {
     const authorization = {
       walletAddress: acceptedTwap.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: false,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -698,7 +707,7 @@ describe("Gas Station request allowlist", () => {
     const ownerAuth = {
       walletAddress: contribute.walletAddress,
       subaccount: "0x22",
-      network: "testnet" as const,
+      network: "mainnet" as const,
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -725,7 +734,6 @@ describe("Gas Station request allowlist", () => {
 
     expect(() => authorizeGasStationRequest(fixture.request, {
       walletAddress: fixture.walletAddress,
-      network: "testnet",
       ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE,
       usdcMetadataAddress: USDC_METADATA,
@@ -737,7 +745,7 @@ describe("Geomi transaction envelope compatibility", () => {
   it("preserves the signed message while encoding the official SDK SimpleTransaction wire format", () => {
     const fixture = sponsoredFixture({ functionName: "create_new_subaccount", arguments: [] });
     const submission = authorizeGasStationRequest(fixture.request, {
-      walletAddress: fixture.walletAddress, network: "testnet", ownerOnly: true,
+      walletAddress: fixture.walletAddress, ownerOnly: true,
       decibelPackageAddress: DECIBEL_PACKAGE, usdcMetadataAddress: USDC_METADATA,
     });
     const transaction = SimpleTransaction.deserialize(new Deserializer(Uint8Array.from(submission.transactionBytes)));

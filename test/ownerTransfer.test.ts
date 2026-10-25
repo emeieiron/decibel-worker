@@ -10,7 +10,7 @@ function transfer(input: { metadata?: string; amount?: bigint; typeArguments?: n
     arguments: [addressBytes(input.metadata ?? USDC_METADATA), input.destination ?? addressBytes("0x789"), u64(input.amount ?? 1_000_000n)],
   });
   const authorization = {
-    walletAddress: signed.walletAddress, subaccount: "0x123", network: "testnet" as const,
+    walletAddress: signed.walletAddress, subaccount: "0x123", network: "mainnet" as const,
     ownerOnly: true, decibelPackageAddress: DECIBEL_PACKAGE, usdcMetadataAddress: USDC_METADATA,
   };
   return { ...signed, authorization };

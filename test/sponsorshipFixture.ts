@@ -81,7 +81,7 @@ function fixtureTransaction(
     ...u64(200_000n),
     ...u64(100n),
     ...u64(2_000_000_000n),
-    2,
+    1, // chain_id: Aptos mainnet
     0,
     ...new Array(32).fill(0),
   ]);

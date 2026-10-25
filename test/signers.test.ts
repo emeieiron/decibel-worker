@@ -11,7 +11,7 @@ import { canonicalAddress } from "../src/security";
 import { ownerAddress, ownerKey, ownerSignature, verifyOwnerSignature } from "../src/signers";
 import { addressBytes, DECIBEL_PACKAGE, sponsoredFixture, USDC_METADATA } from "./sponsorshipFixture";
 
-const CHALLENGE = new TextEncoder().encode("FLARE_AUTH_V1\nnetwork=testnet\nnonce=abc");
+const CHALLENGE = new TextEncoder().encode("FLARE_AUTH_V1\nnetwork=mainnet\nnonce=abc");
 const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 
 /** The two account kinds Flare supports, built by the Aptos SDK. */
@@ -77,7 +77,7 @@ describe("sponsorship senders", () => {
   const authorization = (walletAddress: string) => ({
     walletAddress,
     subaccount: "0x22",
-    network: "testnet" as const,
+    network: "mainnet" as const,
     ownerOnly: false,
     decibelPackageAddress: DECIBEL_PACKAGE,
     usdcMetadataAddress: USDC_METADATA,

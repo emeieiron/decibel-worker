@@ -1,10 +1,13 @@
 export type SessionRole = "anonymous" | "owner" | "api";
 
+/** Flare trades Decibel on Aptos mainnet only. The literal is a domain separator, not a switch. */
+export type FlareNetwork = "mainnet";
+
 export interface SessionClaims {
   exp: number;
   iat: number;
   jti: string;
-  network: "testnet" | "mainnet";
+  network: FlareNetwork;
   role: SessionRole;
   subaccount?: string;
   wallet?: string;
@@ -17,7 +20,7 @@ export interface ChallengeRecord {
 
 export interface SponsorshipRecord {
   fingerprint: string;
-  network: "testnet" | "mainnet";
+  network: FlareNetwork;
   role: Exclude<SessionRole, "anonymous">;
   subaccount?: string;
   status: "pending" | "submitted";
@@ -33,7 +36,7 @@ export interface Env {
   ANONYMOUS_RATE_LIMITER: RateLimit;
   AUTHENTICATED_RATE_LIMITER: RateLimit;
   IP_BACKSTOP_RATE_LIMITER: RateLimit;
-  NETWORK: "testnet" | "mainnet";
+  NETWORK: FlareNetwork;
   APP_ORIGIN: string;
   DECIBEL_ORIGIN: string;
   DECIBEL_REST_ORIGIN: string;
