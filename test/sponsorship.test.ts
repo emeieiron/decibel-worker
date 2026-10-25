@@ -8,7 +8,7 @@ import { sponsoredFixture, DECIBEL_PACKAGE, USDC_METADATA } from "./sponsorshipF
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function fixture(key?: string) {
+async function fixture(key?: string, sessionLimiter?: { limit: (input: { key: string }) => Promise<{ success: boolean }> }) {
   const signed = sponsoredFixture({ functionName: "create_new_subaccount", arguments: [] });
   const now = Math.floor(Date.now() / 1000);
   const claims = { iat: now, exp: now + 3600, jti: "11".repeat(16), network: "mainnet" as const,
@@ -34,13 +34,13 @@ async function fixture(key?: string) {
     DECIBEL_PACKAGE_ADDRESS: DECIBEL_PACKAGE, USDC_METADATA_ADDRESS: USDC_METADATA,
     GAS_STATION_ORIGIN: "https://api.mainnet.aptoslabs.com/gs/v1", GAS_STATION_API_KEY: key,
     SESSIONS: namespace(async () => Response.json(claims)), SPONSORSHIPS: namespace(stateFetch),
-    AUTHENTICATED_RATE_LIMITER: limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
+    AUTHENTICATED_RATE_LIMITER: sessionLimiter ?? limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
   } as unknown as Env;
   const send = (route = "owner") => worker.fetch(new Request(`https://worker/gas/sponsor/${route}`, {
     method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(signed.request),
   }), env);
-  return { send, stateFetch, env };
+  return { send, stateFetch, env, wallet: signed.walletAddress };
 }
 
 describe("sponsorship submission outcomes", () => {
@@ -99,5 +99,29 @@ describe("sponsorship submission outcomes", () => {
     });
     expect(f.stateFetch).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
+describe("session rate limiting", () => {
+  it("refuses an over-limit session before reserving or reaching upstream", async () => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const refuse = { limit: vi.fn(async () => ({ success: false })) };
+    const f = await fixture("test-only-key", refuse);
+
+    const response = await f.send();
+
+    expect(response.status).toBe(429);
+    expect(upstream).not.toHaveBeenCalled();
+    expect(f.stateFetch).not.toHaveBeenCalled();
+  });
+
+  it("meters an owner session by wallet and subaccount", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const refuse = { limit: vi.fn(async () => ({ success: false })) };
+    const f = await fixture("test-only-key", refuse);
+
+    await f.send();
+
+    expect(refuse.limit).toHaveBeenCalledWith({ key: `${f.wallet}:primary` });
   });
 });

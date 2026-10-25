@@ -34,6 +34,7 @@ export interface Env {
   SESSIONS: DurableObjectNamespace;
   SPONSORSHIPS: DurableObjectNamespace;
   ANONYMOUS_RATE_LIMITER: RateLimit;
+  SESSION_CREATION_RATE_LIMITER: RateLimit;
   AUTHENTICATED_RATE_LIMITER: RateLimit;
   IP_BACKSTOP_RATE_LIMITER: RateLimit;
   NETWORK: FlareNetwork;
