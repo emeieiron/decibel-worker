@@ -48,5 +48,7 @@ export interface Env {
   USDC_METADATA_ADDRESS: string;
   DECIBEL_NODE_API_KEY: string;
   GAS_STATION_API_KEY?: string;
+  PANORA_API_KEY?: string;
+  SWAPS_ENABLED?: string;
   SESSION_SIGNING_KEY: string;
 }

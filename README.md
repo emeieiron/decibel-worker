@@ -71,3 +71,11 @@ The node key and the Gas Station resource key are per-network, so a deployment n
 Note that `npm run dev` reads the same `[vars]`, so a local Worker proxies mainnet. Keep the mainnet Gas Station key out of `.dev.vars` unless you intend to sponsor real transactions.
 
 The v1 WebSocket bridge deliberately maintains one outgoing connection per mobile connection. Durable Object WebSocket hibernation does not apply to outgoing sockets, so reconnect and REST backfill remain client responsibilities.
+
+## Swap infrastructure
+
+`POST /swap/quote` accepts an owner session and `{owner, kind, amount, slippageBps}`. Amounts are integer base-unit strings; kinds are `EXACT_INPUT` or `EXACT_OUTPUT`. Only Aptos-mainnet APT to Circle-native USDC, direct FA routes, up to 100 bps slippage and zero provider fees are supported. Set the `PANORA_API_KEY` secret and explicitly enable `SWAPS_ENABLED` after verifying the Gas Station policy. This change does not deploy or enable swaps.
+
+The response includes a normalized provider response and a domain-separated signed authorization binding the wallet, payload hash and expiry. The client must independently encode and verify the payload. Sponsored submissions attach this token as `swapAuthorization` on `/gas/sponsor/owner`; the worker verifies the signature, owner, exact payload, expiry and gas bounds. Quote usage is reserved in durable storage, so one quote cannot sponsor different signed transactions. Existing sponsorship fingerprints retain submission recovery. Self-paid execution remains the client's responsibility.
+
+Quote requests use owner and IP rate limits, an eight-second provider deadline, a 128 KiB response limit and per-isolate backoff after repeated transport failures. Executable quotes are never shared across wallets or cached. Provider transaction envelopes and signing messages are discarded. The captured public mainnet quote in the tests is never submitted.

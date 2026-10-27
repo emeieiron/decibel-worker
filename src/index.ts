@@ -1,3 +1,5 @@
+import { issueSwapAuthorization, limitedQuoteText, parseSwapRequest, panoraUrl, SwapProviderHealth, validatePanoraQuote, verifySwapAuthorization } from "./swaps";
+import type { SwapAuthorization } from "./swaps";
 import { isAllowedAptosReadPath } from "./routes";
 import {
   buildChallenge,
@@ -84,6 +86,8 @@ const OWNER_SCOPED_ENDPOINTS = new Set([
   "streaks/account",
 ]);
 
+const swapProviderHealth = new SwapProviderHealth();
+
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const TRANSACTION_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const FINGERPRINT_PATTERN = /^0x[0-9a-fA-F]{64}$/;
@@ -109,6 +113,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/session/revoke") {
         return corsResponse(env, await revokeSession(request, env));
       }
+      if (url.pathname === "/swap/quote") return corsResponse(env, await swapQuote(request, env));
       if (url.pathname === "/decibel/ws") return await proxyWebSocket(request, env);
       if (url.pathname.startsWith("/decibel/api/v1/")) {
         return corsResponse(env, await proxyDecibelRest(request, env));
@@ -342,6 +347,42 @@ async function proxyAptos(request: Request, env: Env): Promise<Response> {
   return upstreamFetch(request, upstream, headers, readAllowed || publicView ? "public" : "private");
 }
 
+async function swapQuote(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") throw new HttpError(405, "Swap quotes require POST");
+  const claims = await authenticate(request, env);
+  await enforceSessionRateLimit(claims, env);
+  if (claims.role !== "owner" || !claims.wallet) throw new HttpError(403, "Owner session required");
+  if (env.SWAPS_ENABLED !== "true" || !env.PANORA_API_KEY?.trim()) throw new HttpError(503, "Swaps are not configured");
+  let swapRequest;
+  try { swapRequest = parseSwapRequest(await readJson<unknown>(request), claims.wallet); }
+  catch (error) { throw new HttpError(400, safeMessage(error)); }
+  const budget = await env.SESSION_CREATION_RATE_LIMITER.limit({ key: `swap:${claims.wallet}` });
+  if (!budget.success) throw new HttpError(429, "Swap quote rate limit exceeded");
+  if (!swapProviderHealth.available()) throw new HttpError(503, "Swap provider temporarily unavailable");
+  let validated;
+  const started = Date.now();
+  try {
+    const upstream = await fetch(panoraUrl(swapRequest), {
+      method: "POST", headers: { "x-api-key": env.PANORA_API_KEY.trim() }, redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    }).catch(error => { swapProviderHealth.failed(); throw error; });
+    if (upstream.status >= 500) swapProviderHealth.failed();
+    else swapProviderHealth.succeeded();
+    if (!upstream.ok) throw new Error("Swap provider unavailable");
+    const text = await limitedQuoteText(upstream);
+    validated = validatePanoraQuote(JSON.parse(text), swapRequest);
+  } catch { throw new HttpError(502, "Unable to obtain a supported swap quote"); }
+  const authorization: SwapAuthorization = {
+    purpose: "flare.swap.v1", id: crypto.randomUUID(), wallet: claims.wallet,
+    payloadHash: validated.payloadHash, expiresAtMs: started + 30000,
+  };
+  return Response.json({
+    id: authorization.id, request: swapRequest, response: validated.response,
+    payloadHash: validated.payloadHash, expiresAtMs: authorization.expiresAtMs,
+    authorization: await issueSwapAuthorization(authorization, env.SESSION_SIGNING_KEY),
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
 async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") throw new HttpError(405, "Gas sponsorship requires POST");
   const claims = await authenticate(request, env);
@@ -356,19 +397,37 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   } catch (error) {
     throw new HttpError(400, safeMessage(error));
   }
+  let swapAuthorization: SwapAuthorization | undefined;
   let submissionBody;
   try {
+    if (body.swapAuthorization) {
+      if (env.SWAPS_ENABLED !== "true" || !ownerOnly || claims.role !== "owner") throw new Error("Swap sponsorship is unavailable");
+      swapAuthorization = await verifySwapAuthorization(body.swapAuthorization, env.SESSION_SIGNING_KEY, claims.wallet);
+    }
     submissionBody = authorizeGasStationRequest(body, {
       walletAddress: claims.wallet ?? "",
       subaccount: claims.subaccount,
       ownerOnly,
       decibelPackageAddress: env.DECIBEL_PACKAGE_ADDRESS,
       usdcMetadataAddress: env.USDC_METADATA_ADDRESS,
+      swapAuthorization,
     });
   } catch (error) {
     return sponsorshipNotAllowed(safeMessage(error));
   }
   const fingerprint = externalFeePayerFingerprint(body);
+  if (swapAuthorization) {
+    const quoteUse = stateStub(env.SPONSORSHIPS, `swap:${swapAuthorization.id}`);
+    const reservedQuote = await quoteUse.fetch("https://state/", {
+      method: "POST", body: JSON.stringify({ fingerprint, expiresAt: Date.now() + SPONSORSHIP_RECORD_TTL_MS }),
+    });
+    if (!reservedQuote.ok) {
+      const previous = await quoteUse.fetch("https://state/");
+      if (!previous.ok || (await previous.json<{ fingerprint?: string }>()).fingerprint !== fingerprint) {
+        throw new HttpError(409, "Swap quote already used by another signed transaction");
+      }
+    }
+  }
   const sponsorship = stateStub(env.SPONSORSHIPS, fingerprint);
   const expiresAt = Date.now() + SPONSORSHIP_RECORD_TTL_MS;
   const pending: SponsorshipRecord = {

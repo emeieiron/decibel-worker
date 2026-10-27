@@ -10,6 +10,8 @@ import {
   TypeTagStruct,
   TypeTagVector,
 } from "@aptos-labs/ts-sdk";
+import type { SwapAuthorization } from "./swaps";
+import { PANORA_ROUTER } from "./swaps";
 import { sha3_256 } from "@noble/hashes/sha3.js";
 import { canonicalAddress } from "./security";
 import { ownerAddress, parseSenderAuthenticator, verifyOwnerSignature } from "./signers";
@@ -18,6 +20,7 @@ export type GasStationRequest = {
   transactionBytes: number[];
   senderAuth: number[];
   additionalSignersAuth?: number[][];
+  swapAuthorization?: string;
 };
 
 export type GasStationAuthorization = {
@@ -26,6 +29,7 @@ export type GasStationAuthorization = {
   ownerOnly: boolean;
   decibelPackageAddress: string;
   usdcMetadataAddress: string;
+  swapAuthorization?: SwapAuthorization;
 };
 
 /** Aptos mainnet. A transaction signed for another chain is not ours to sponsor. */
@@ -112,6 +116,7 @@ export function validateGasStationRequest(value: unknown): GasStationRequest {
   return {
     transactionBytes,
     senderAuth,
+    ...(typeof value.swapAuthorization === "string" && value.swapAuthorization.length <= 2048 ? { swapAuthorization: value.swapAuthorization } : {}),
     ...(additionalSignersAuth?.length ? { additionalSignersAuth } : {}),
   };
 }
@@ -236,7 +241,17 @@ export function authorizeGasStationRequest(
   }
 
   if (sender.chainId !== APTOS_MAINNET_CHAIN_ID) throw new Error("Transaction network mismatch");
-  if (isOwnerUsdcTransfer(sender)) {
+  if (`${addressHex(sender.packageAddress)}::${sender.module}::${sender.function}` === PANORA_ROUTER) {
+    const swap = authorization.swapAuthorization;
+    if (!authorization.ownerOnly || !swap || swap.wallet !== walletAddress ||
+      swap.expiresAtMs <= Date.now() || swap.payloadHash !== sender.payloadHash ||
+      sender.maxGasAmount > 50_000n || sender.gasUnitPrice > 1_000n ||
+      sender.expiration * 1000n > BigInt(swap.expiresAtMs)) {
+      throw new Error("Swap sponsorship does not match an approved, unexpired quote");
+    }
+  } else if (authorization.swapAuthorization) {
+    throw new Error("Swap authorization cannot sponsor another transaction");
+  } else if (isOwnerUsdcTransfer(sender)) {
     authorizeOwnerUsdcTransfer(sender, authorization);
   } else {
     authorizeDecibelCall(sender, authorization);
@@ -516,6 +531,10 @@ type ParsedSponsoredTransaction = {
   arguments: Uint8Array[];
   typeArguments: string[];
   chainId: number;
+  payloadHash: string;
+  maxGasAmount: bigint;
+  gasUnitPrice: bigint;
+  expiration: bigint;
 };
 
 function parseSponsoredTransaction(bytes: Uint8Array): ParsedSponsoredTransaction {
@@ -548,6 +567,10 @@ function parseSponsoredTransaction(bytes: Uint8Array): ParsedSponsoredTransactio
     arguments: args,
     typeArguments: entry.type_args.map((tag) => typeTagName(tag, 0)),
     chainId: raw.chain_id.chainId,
+    payloadHash: `0x${Buffer.from(sha3_256(raw.payload.bcsToBytes())).toString("hex")}`,
+    maxGasAmount: raw.max_gas_amount,
+    gasUnitPrice: raw.gas_unit_price,
+    expiration: raw.expiration_timestamp_secs,
   };
 }
 
