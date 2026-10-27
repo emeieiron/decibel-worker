@@ -1,6 +1,6 @@
 import { createPublicKey, verify as verifyNodeSignature } from "node:crypto";
 import { sha3_256 } from "@noble/hashes/sha3.js";
-import type { SessionClaims } from "./types";
+import type { FlareNetwork, SessionClaims } from "./types";
 
 const encoder = new TextEncoder();
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -10,7 +10,7 @@ export const CHALLENGE_TTL_MS = 5 * 60 * 1_000;
 export const SESSION_TTL_SECONDS = 55 * 60;
 
 export interface ChallengeFields {
-  network: "testnet" | "mainnet";
+  network: FlareNetwork;
   origin: string;
   walletAddress: string;
   subaccount?: string;
@@ -65,7 +65,7 @@ export function parseChallenge(challenge: string): ChallengeFields {
   }
 
   const network = values.get("network");
-  if (network !== "testnet" && network !== "mainnet") throw new Error("Invalid network");
+  if (network !== "mainnet") throw new Error("Invalid network");
   const issuedAt = Number(values.get("issued_at"));
   const expiresAt = Number(values.get("expires_at"));
   const parsed: ChallengeFields = {

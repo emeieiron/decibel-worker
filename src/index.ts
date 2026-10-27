@@ -135,7 +135,7 @@ async function createAnonymousSession(request: Request, env: Env): Promise<Respo
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(installationId)) {
     throw new HttpError(400, "Invalid installation identifier");
   }
-  const limited = await env.ANONYMOUS_RATE_LIMITER.limit({ key: `session:${installationId}` });
+  const limited = await env.SESSION_CREATION_RATE_LIMITER.limit({ key: `session:${installationId}` });
   if (!limited.success) throw new HttpError(429, "Rate limit exceeded");
   return issueAndStoreSession(env, "anonymous", { jti: randomHex(16) });
 }
@@ -361,7 +361,6 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     submissionBody = authorizeGasStationRequest(body, {
       walletAddress: claims.wallet ?? "",
       subaccount: claims.subaccount,
-      network: claims.network,
       ownerOnly,
       decibelPackageAddress: env.DECIBEL_PACKAGE_ADDRESS,
       usdcMetadataAddress: env.USDC_METADATA_ADDRESS,
@@ -687,7 +686,6 @@ function enforceAccountScope(endpoint: string, parameters: URLSearchParams, clai
 }
 
 async function enforceSessionRateLimit(claims: SessionClaims, env: Env): Promise<void> {
-  if (env.NETWORK === "testnet") return;
   const limiter = claims.role === "anonymous" ? env.ANONYMOUS_RATE_LIMITER : env.AUTHENTICATED_RATE_LIMITER;
   const key = claims.role === "anonymous" ? claims.jti : `${claims.wallet}:${claims.subaccount ?? "primary"}`;
   const result = await limiter.limit({ key });
