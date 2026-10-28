@@ -110,7 +110,8 @@ describe("swap sponsorship authorization", () => {
 
 
 describe("swap quotes without sponsorship", () => {
-  it.each([true, false])("uses a separate per-wallet quote budget without a Gas Station key (allowed=%s)", async allowed => {
+  it.each([{ allowed: true, fallback: false }, { allowed: false, fallback: false }, { allowed: true, fallback: true }])(
+    "uses a separate per-wallet budget and validates FA fallback (allowed=$allowed, fallback=$fallback)", async ({ allowed, fallback }) => {
     const now = Math.floor(Date.now() / 1000);
     const claims = { iat: now, exp: now + 3600, jti: "22".repeat(16), network: "mainnet" as const,
       role: "owner" as const, wallet: owner };
@@ -128,7 +129,11 @@ describe("swap quotes without sponsorship", () => {
       expect(url.origin).toBe("https://api.panora.exchange");
       expect(init.method).toBe("POST");
       expect(new Headers(init.headers).get("x-api-key")).toBe("test-panora-key");
-      return Response.json(copy());
+      const quote = copy();
+      if (fallback && !url.searchParams.has("includeSources")) {
+        quote.quotes[0].txData.type_arguments[0] = "0x1::aptos_coin::AptosCoin";
+      } else if (fallback) expect(url.searchParams.get("includeSources")).toBe("Hyperion");
+      return Response.json(quote);
     });
     vi.stubGlobal("fetch", upstream);
     const response = await worker.fetch(new Request("https://worker/swap/quote", {
@@ -147,6 +152,7 @@ describe("swap quotes without sponsorship", () => {
     expect(body.expiresAtMs - body.issuedAtMs).toBeLessThanOrEqual(30000);
     expect(body.payloadHash).toBe(validatePanoraQuote(copy(), request).payloadHash);
     expect(await verifySwapAuthorization(body.authorization, secret, owner)).toMatchObject({ payloadHash: body.payloadHash });
-    expect(upstream).toHaveBeenCalledOnce();
+    expect(upstream).toHaveBeenCalledTimes(fallback ? 2 : 1);
+    if (fallback) expect(upstream.mock.calls[0][1].signal).toBe(upstream.mock.calls[1][1].signal);
   });
 });

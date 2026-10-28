@@ -9,6 +9,8 @@ const U64_MAX = (1n << 64n) - 1n;
 const STRING_TAG = "0x1::string::String";
 const TYPES = ["o:signer", "address", "u64", "u8", "v:u8", "v:v:v:u8", "v:v:v:u64", "v:v:v:bool", "v:v:u8", "v:v:v:address", "v:v:address", "v:v:address", "o:v:v:v:v:v:u8", "v:v:v:u64", "o:v:v:v:u8", "address", "v:u64", "u64", "u64", "address"];
 
+export class UnsupportedPanoraRoute extends Error {}
+
 export type SwapRequest = { owner: string; kind: "EXACT_INPUT" | "EXACT_OUTPUT"; amount: string; slippageBps: number };
 export type SwapAuthorization = { purpose: "flare.swap.v1"; id: string; wallet: string; payloadHash: string; expiresAtMs: number };
 export type ValidatedQuote = { response: Record<string, unknown>; payloadHash: string; payload: TransactionPayloadEntryFunction };
@@ -56,7 +58,7 @@ export function parseSwapRequest(value: unknown, owner: string): SwapRequest {
   return { owner: wallet, kind: body.kind, amount, slippageBps };
 }
 
-export function panoraUrl(request: SwapRequest): URL {
+export function panoraUrl(request: SwapRequest, source?: string): URL {
   const url = new URL("https://api.panora.exchange/swap");
   const exactOut = request.kind === "EXACT_OUTPUT";
   url.search = new URLSearchParams({
@@ -66,6 +68,7 @@ export function panoraUrl(request: SwapRequest): URL {
     slippagePercentage: decimal(BigInt(request.slippageBps), 2),
     integratorFeePercentage: "0", onlyDirectRoutes: "true", disableSplits: "true",
   }).toString();
+  if (source) url.searchParams.set("includeSources", source);
   return url;
 }
 
@@ -94,7 +97,7 @@ export function validatePanoraQuote(value: unknown, request: SwapRequest): Valid
   if (tx.function !== PANORA_ROUTER) throw new Error("Unknown swap router");
   const tags = array(tx.type_arguments);
   if (tags.length !== 32 || tags.some(tag => parseTypeTag(text(tag)).toString() !== parseTypeTag(STRING_TAG).toString())) {
-    throw new Error("Only fungible-asset routes are supported");
+    throw new UnsupportedPanoraRoute("Only fungible-asset routes are supported");
   }
   const args = array(tx.arguments);
   if (args.length !== TYPES.length || args[0] !== null || canonicalAddress(text(args[1])) !== request.owner ||

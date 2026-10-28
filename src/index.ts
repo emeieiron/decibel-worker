@@ -1,4 +1,4 @@
-import { issueSwapAuthorization, limitedQuoteText, parseSwapRequest, panoraUrl, SwapProviderHealth, validatePanoraQuote, verifySwapAuthorization } from "./swaps";
+import { UnsupportedPanoraRoute, issueSwapAuthorization, limitedQuoteText, parseSwapRequest, panoraUrl, SwapProviderHealth, validatePanoraQuote, verifySwapAuthorization } from "./swaps";
 import type { SwapAuthorization } from "./swaps";
 import { isAllowedAptosReadPath } from "./routes";
 import {
@@ -362,15 +362,23 @@ async function swapQuote(request: Request, env: Env): Promise<Response> {
   let validated;
   const started = Date.now();
   try {
-    const upstream = await fetch(panoraUrl(swapRequest), {
-      method: "POST", headers: { "x-api-key": env.PANORA_API_KEY.trim() }, redirect: "manual",
-      signal: AbortSignal.timeout(8000),
-    }).catch(error => { swapProviderHealth.failed(); throw error; });
-    if (upstream.status >= 500) swapProviderHealth.failed();
-    else swapProviderHealth.succeeded();
-    if (!upstream.ok) throw new Error("Swap provider unavailable");
-    const text = await limitedQuoteText(upstream);
-    validated = validatePanoraQuote(JSON.parse(text), swapRequest);
+    const signal = AbortSignal.timeout(8000);
+    const obtain = async (source?: string) => {
+      const upstream = await fetch(panoraUrl(swapRequest, source), {
+        method: "POST", headers: { "x-api-key": env.PANORA_API_KEY!.trim() }, redirect: "manual", signal,
+      }).catch(error => { swapProviderHealth.failed(); throw error; });
+      if (upstream.status >= 500) swapProviderHealth.failed();
+      else swapProviderHealth.succeeded();
+      if (!upstream.ok) throw new Error("Swap provider unavailable");
+      return validatePanoraQuote(JSON.parse(await limitedQuoteText(upstream)), swapRequest);
+    };
+    try { validated = await obtain(); }
+    catch (error) {
+      if (!(error instanceof UnsupportedPanoraRoute)) throw error;
+      // The best direct route may use legacy coin types. Request an FA-capable source
+      // within the same deadline, then apply the unchanged payload policy again.
+      validated = await obtain("Hyperion");
+    }
   } catch { throw new HttpError(502, "Unable to obtain a supported swap quote"); }
   const authorization: SwapAuthorization = {
     purpose: "flare.swap.v1", id: crypto.randomUUID(), wallet: claims.wallet,
