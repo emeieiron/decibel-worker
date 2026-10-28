@@ -1,10 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/state", () => ({ FlareState: class {} }));
+import worker from "../src/index";
+import { issueSessionToken } from "../src/security";
+import type { Env } from "../src/types";
 import { Account, AccountAddress, AccountAuthenticatorEd25519, ChainId, FeePayerRawTransaction, generateSigningMessage, RawTransaction } from "@aptos-labs/ts-sdk";
 import fixture from "./fixtures/panora.json";
 import exactInputFixture from "./fixtures/panora-exact-input.json";
 import { authorizeGasStationRequest } from "../src/gasStation";
 import { issueSwapAuthorization, limitedQuoteText, PANORA_ROUTER, parseSwapRequest, panoraUrl, SwapProviderHealth, validatePanoraQuote, verifySwapAuthorization, type SwapAuthorization } from "../src/swaps";
 import { canonicalAddress } from "../src/security";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const owner = canonicalAddress("0x1");
 const request = parseSwapRequest({ owner, kind: "EXACT_OUTPUT", amount: "10000000", slippageBps: 50 }, owner);
@@ -98,5 +104,39 @@ describe("swap sponsorship authorization", () => {
     expect(() => authorizeGasStationRequest(body, { ...policy, swapAuthorization: undefined })).toThrow();
     expect(() => authorizeGasStationRequest(body, { ...policy, swapAuthorization: { ...policy.swapAuthorization, payloadHash: "0x" + "00".repeat(32) } })).toThrow();
     expect(() => authorizeGasStationRequest(body, { ...policy, swapAuthorization: { ...policy.swapAuthorization, expiresAtMs: Date.now() - 1 } })).toThrow();
+  });
+});
+
+
+describe("swap quotes without sponsorship", () => {
+  it("returns an authorized quote without a Gas Station key", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const claims = { iat: now, exp: now + 3600, jti: "22".repeat(16), network: "mainnet" as const,
+      role: "owner" as const, wallet: owner };
+    const token = await issueSessionToken(claims, secret);
+    const limiter = { limit: async () => ({ success: true }) };
+    const env = {
+      NETWORK: "mainnet", APP_ORIGIN: "flare://mobile", SESSION_SIGNING_KEY: secret,
+      SWAPS_ENABLED: "true", PANORA_API_KEY: "test-panora-key",
+      SESSIONS: { idFromName: (name: string) => name, get: () => ({ fetch: async () => Response.json(claims) }) },
+      AUTHENTICATED_RATE_LIMITER: limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
+      SESSION_CREATION_RATE_LIMITER: limiter,
+    } as unknown as Env;
+    const upstream = vi.fn(async (url: URL, init: RequestInit) => {
+      expect(url.origin).toBe("https://api.panora.exchange");
+      expect(init.method).toBe("POST");
+      expect(new Headers(init.headers).get("x-api-key")).toBe("test-panora-key");
+      return Response.json(copy());
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await worker.fetch(new Request("https://worker/swap/quote", {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }), env);
+    expect(response.status).toBe(200);
+    const body = await response.json<{ authorization: string; payloadHash: string }>();
+    expect(body.payloadHash).toBe(validatePanoraQuote(copy(), request).payloadHash);
+    expect(await verifySwapAuthorization(body.authorization, secret, owner)).toMatchObject({ payloadHash: body.payloadHash });
+    expect(upstream).toHaveBeenCalledOnce();
   });
 });

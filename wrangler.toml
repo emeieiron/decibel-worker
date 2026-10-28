@@ -11,8 +11,9 @@ routes = [{ pattern = "api.mcxross.xyz", custom_domain = true }]
 
 [vars]
 NETWORK = "mainnet"
-# Enable only after setting PANORA_API_KEY and allowing the verified router in the upstream Gas Station.
-SWAPS_ENABLED = "false"
+# Set PANORA_API_KEY to Panora's documented public key or a dedicated key.
+# Quotes and self-paid execution do not require Gas Station sponsorship.
+SWAPS_ENABLED = "true"
 APP_ORIGIN = "flare://mobile"
 DECIBEL_ORIGIN = "flare://mobile"
 DECIBEL_REST_ORIGIN = "https://api.mainnet.aptoslabs.com/decibel"
@@ -74,5 +75,5 @@ namespace_id = "1003"
   limit = 2_000
   period = 60
 
-# Set DECIBEL_NODE_API_KEY, GAS_STATION_API_KEY, and SESSION_SIGNING_KEY with
+# Set DECIBEL_NODE_API_KEY, GAS_STATION_API_KEY, SESSION_SIGNING_KEY, and PANORA_API_KEY with
 # `wrangler secret put`. Never place their values in this file.

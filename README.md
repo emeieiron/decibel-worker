@@ -12,11 +12,12 @@ The Worker and mobile client are versioned separately. A Flare release should re
 - allowlisted `GET /decibel/api/v1/*`
 - one-to-one `/decibel/ws` bridges with validated topics
 - allowlisted `/aptos/v1/*` reads, views, simulation, and transaction submission
+- `POST /swap/quote`
 - `POST /gas/sponsor/owner`
 - `POST /gas/sponsor/trading`
 - `GET /gas/sponsor/status/:fingerprint`
 
-Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
+Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions or quote-authorized Panora swaps. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
 
 Successful sponsorships are correlated by Kaptos' domain-separated request fingerprint for seven days. The fixed status route lets an interrupted client recover the on-chain transaction hash and continue normal Kaptos reconciliation without resubmitting the transaction.
 
@@ -63,6 +64,7 @@ Create secrets with Wrangler:
 npx wrangler secret put DECIBEL_NODE_API_KEY
 npx wrangler secret put GAS_STATION_API_KEY
 npx wrangler secret put SESSION_SIGNING_KEY
+npx wrangler secret put PANORA_API_KEY
 npm run deploy
 ```
 
@@ -74,8 +76,10 @@ The v1 WebSocket bridge deliberately maintains one outgoing connection per mobil
 
 ## Swap infrastructure
 
-`POST /swap/quote` accepts an owner session and `{owner, kind, amount, slippageBps}`. Amounts are integer base-unit strings; kinds are `EXACT_INPUT` or `EXACT_OUTPUT`. Only Aptos-mainnet APT to Circle-native USDC, direct FA routes, up to 100 bps slippage and zero provider fees are supported. Set the `PANORA_API_KEY` secret and explicitly enable `SWAPS_ENABLED` after verifying the Gas Station policy. This change does not deploy or enable swaps.
+`POST /swap/quote` accepts an owner session and `{owner, kind, amount, slippageBps}`. Amounts are integer base-unit strings; kinds are `EXACT_INPUT` or `EXACT_OUTPUT`. Only Aptos-mainnet APT to Circle-native USDC, direct FA routes, up to 100 bps slippage and zero provider fees are supported. `SWAPS_ENABLED` is enabled in `wrangler.toml`; the `PANORA_API_KEY` secret is also required. Panora's [documented public API key](https://docs.panora.exchange/developer/swap/api) is sufficient to start; a dedicated key can replace it if capacity requires one. Keep the key in Worker configuration so it can be rotated without a mobile release.
 
-The response includes a normalized provider response and a domain-separated signed authorization binding the wallet, payload hash and expiry. The client must independently encode and verify the payload. Sponsored submissions attach this token as `swapAuthorization` on `/gas/sponsor/owner`; the worker verifies the signature, owner, exact payload, expiry and gas bounds. Quote usage is reserved in durable storage, so one quote cannot sponsor different signed transactions. Existing sponsorship fingerprints retain submission recovery. Self-paid execution remains the client's responsibility.
+The response includes a normalized provider response and a domain-separated signed authorization binding the wallet, payload hash and expiry. The client must independently encode and verify the payload. Sponsored submissions attach this token as `swapAuthorization` on `/gas/sponsor/owner`; the worker verifies the signature, owner, exact payload, expiry and gas bounds. Quote usage is reserved in durable storage, so one quote cannot sponsor different signed transactions. Existing sponsorship fingerprints retain submission recovery.
+
+Sponsorship uses the existing `GAS_STATION_API_KEY`; no new Gas Station credential is required. Allow the verified Panora router in the upstream Gas Station policy to sponsor swaps. Quotes and self-paid execution do not depend on this policy: if Flare definitively cannot sponsor, the client offers execution paid with the user's APT. A timeout or uncertain submission must be reconciled before attempting self-pay, to avoid a duplicate swap. Self-paid execution remains the client's responsibility.
 
 Quote requests use owner and IP rate limits, an eight-second provider deadline, a 128 KiB response limit and per-isolate backoff after repeated transport failures. Executable quotes are never shared across wallets or cached. Provider transaction envelopes and signing messages are discarded. The captured public mainnet quote in the tests is never submitted.

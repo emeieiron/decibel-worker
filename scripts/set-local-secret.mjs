@@ -6,6 +6,7 @@ const allowedNames = new Set([
   "DECIBEL_NODE_API_KEY",
   "GAS_STATION_API_KEY",
   "SESSION_SIGNING_KEY",
+  "PANORA_API_KEY",
 ]);
 
 const name = process.argv[2];

@@ -1,3 +1,4 @@
 DECIBEL_NODE_API_KEY=replace-with-a-development-token
 GAS_STATION_API_KEY=replace-with-a-development-token
 SESSION_SIGNING_KEY=replace-with-at-least-32-random-bytes
+PANORA_API_KEY=replace-with-panora-public-or-dedicated-key
