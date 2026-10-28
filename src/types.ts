@@ -51,5 +51,6 @@ export interface Env {
   GAS_STATION_API_KEY?: string;
   PANORA_API_KEY?: string;
   SWAPS_ENABLED?: string;
+  SWAP_SPONSORSHIP_ENABLED?: string;
   SESSION_SIGNING_KEY: string;
 }

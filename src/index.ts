@@ -87,6 +87,7 @@ const OWNER_SCOPED_ENDPOINTS = new Set([
 ]);
 
 const swapProviderHealth = new SwapProviderHealth();
+let swapSponsorshipBlockedUntil = 0;
 
 const SPONSORSHIP_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const TRANSACTION_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
@@ -120,6 +121,9 @@ export default {
       }
       if (url.pathname === "/aptos/v1" || url.pathname.startsWith("/aptos/v1/")) {
         return corsResponse(env, await proxyAptos(request, env));
+      }
+      if (url.pathname === "/gas/sponsor/swap-availability") {
+        return corsResponse(env, await swapSponsorshipAvailability(request, env));
       }
       if (url.pathname === "/gas/sponsor/owner" || url.pathname === "/gas/sponsor/trading") {
         return corsResponse(env, await proxyGasStation(request, env));
@@ -391,6 +395,22 @@ async function swapQuote(request: Request, env: Env): Promise<Response> {
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
+function swapSponsorshipConfigured(env: Env): boolean {
+  return env.SWAPS_ENABLED === "true" && env.SWAP_SPONSORSHIP_ENABLED === "true" &&
+    Boolean(env.GAS_STATION_API_KEY?.trim()) && Date.now() >= swapSponsorshipBlockedUntil;
+}
+
+async function swapSponsorshipAvailability(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") throw new HttpError(405, "Sponsorship availability requires GET");
+  const claims = await authenticate(request, env);
+  await enforceSessionRateLimit(claims, env);
+  if (claims.role !== "owner" || !claims.wallet) throw new HttpError(403, "Owner session required");
+  // Geomi exposes no unsigned eligibility/reservation API. This is a conservative
+  // deployment-policy check, not a guarantee that a later submission will succeed.
+  return Response.json({ available: swapSponsorshipConfigured(env) },
+    { headers: { "Cache-Control": "no-store" } });
+}
+
 async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") throw new HttpError(405, "Gas sponsorship requires POST");
   const claims = await authenticate(request, env);
@@ -411,6 +431,7 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     if (body.swapAuthorization) {
       if (env.SWAPS_ENABLED !== "true" || !ownerOnly || claims.role !== "owner") throw new Error("Swap sponsorship is unavailable");
       swapAuthorization = await verifySwapAuthorization(body.swapAuthorization, env.SESSION_SIGNING_KEY, claims.wallet);
+      if (!swapSponsorshipConfigured(env)) return sponsorshipNotAllowed("Swap sponsorship is unavailable");
     }
     submissionBody = authorizeGasStationRequest(body, {
       walletAddress: claims.wallet ?? "",
@@ -494,7 +515,10 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
   }
   const responseBody = await response.text();
   if (!response.ok) {
-    console.error("Gas Station error:", response.status, responseBody);
+    console.error("Gas Station error:", response.status);
+    if (swapAuthorization && DEFINITIVE_GAS_STATION_REJECTIONS.has(response.status)) {
+      swapSponsorshipBlockedUntil = Date.now() + 60_000;
+    }
     if (DEFINITIVE_GAS_STATION_REJECTIONS.has(response.status)) {
       await sponsorship.fetch("https://state/", { method: "DELETE" });
     }

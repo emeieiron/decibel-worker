@@ -16,6 +16,7 @@ The Worker and mobile client are versioned separately. A Flare release should re
 - `POST /gas/sponsor/owner`
 - `POST /gas/sponsor/trading`
 - `GET /gas/sponsor/status/:fingerprint`
+- `GET /gas/sponsor/swap-availability` (owner session; read-only deployment policy)
 
 Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions or quote-authorized Panora swaps. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
 
@@ -85,3 +86,7 @@ Sponsorship uses the existing `GAS_STATION_API_KEY`; no new Gas Station credenti
 Quote requests use a dedicated budget of 30 requests per minute per owner, independent session and IP rate limits, an eight-second provider deadline, a 128 KiB response limit and per-isolate backoff after repeated transport failures. Executable quotes are never shared across wallets or cached. Provider transaction envelopes and signing messages are discarded. The captured public mainnet quote in the tests is never submitted.
 
 When Panora’s best direct route uses unsupported coin types, the Worker requests a Hyperion route within the same eight-second deadline. The replacement must pass the same FA asset, recipient, input/output, fee, slippage and payload checks before any authorization is issued. The response also includes `issuedAtMs` and `expiresAtMs` so clients can derive a conservative local lifetime without assuming synchronized clocks.
+
+### Swap fee preflight
+
+Swap sponsorship is explicitly opt-in through `SWAP_SPONSORSHIP_ENABLED`. It is disabled in the current deployment because the live Gas Station returned HTTP 404. Enable it only after verifying the Gas Station resource and upstream Panora contract policy. The owner-only availability route never signs, reserves a quote, or submits a transaction. It reports false for a disabled or unconfigured sponsor, and after a definite upstream rejection applies a per-isolate 60-second cooldown. This is a deployment policy check: the published Geomi client exposes only sign-and-submit, without an unsigned eligibility or budget-reservation API. A positive response cannot guarantee later acceptance. Mobile clients must display the chosen fee payer and simulate the exact swap before asking for authorization. An unavailable preflight may select explicit self-pay before signing; an uncertain submitted transaction must still be reconciled before any replacement.
