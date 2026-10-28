@@ -378,7 +378,7 @@ async function swapQuote(request: Request, env: Env): Promise<Response> {
   };
   return Response.json({
     id: authorization.id, request: swapRequest, response: validated.response,
-    payloadHash: validated.payloadHash, expiresAtMs: authorization.expiresAtMs,
+    payloadHash: validated.payloadHash, expiresAtMs: authorization.expiresAtMs, issuedAtMs: Date.now(),
     authorization: await issueSwapAuthorization(authorization, env.SESSION_SIGNING_KEY),
   }, { headers: { "Cache-Control": "no-store" } });
 }

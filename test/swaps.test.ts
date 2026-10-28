@@ -142,7 +142,9 @@ describe("swap quotes without sponsorship", () => {
       return;
     }
     expect(response.status).toBe(200);
-    const body = await response.json<{ authorization: string; payloadHash: string }>();
+    const body = await response.json<{ authorization: string; payloadHash: string; expiresAtMs: number; issuedAtMs: number }>();
+    expect(body.expiresAtMs - body.issuedAtMs).toBeGreaterThan(0);
+    expect(body.expiresAtMs - body.issuedAtMs).toBeLessThanOrEqual(30000);
     expect(body.payloadHash).toBe(validatePanoraQuote(copy(), request).payloadHash);
     expect(await verifySwapAuthorization(body.authorization, secret, owner)).toMatchObject({ payloadHash: body.payloadHash });
     expect(upstream).toHaveBeenCalledOnce();
