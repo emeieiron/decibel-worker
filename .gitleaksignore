@@ -1,0 +1,2 @@
+# Historical public test-only HMAC fixture, replaced with an ephemeral key.
+21943ca141f63505e28486167d9d559245c9ce53:test/swaps.test.ts:generic-api-key:11

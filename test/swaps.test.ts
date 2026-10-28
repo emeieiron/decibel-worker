@@ -14,7 +14,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 const owner = canonicalAddress("0x1");
 const request = parseSwapRequest({ owner, kind: "EXACT_OUTPUT", amount: "10000000", slippageBps: 50 }, owner);
-const secret = "test-swap-signing-key-with-at-least-32-bytes";
+// Tests use an ephemeral HMAC key, never a deployment credential.
+const secret = crypto.randomUUID() + crypto.randomUUID();
 const copy = () => structuredClone(fixture);
 
 describe("Panora quote policy", () => {
