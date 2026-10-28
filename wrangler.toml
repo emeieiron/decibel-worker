@@ -59,6 +59,15 @@ namespace_id = "1004"
   limit = 10
   period = 60
 
+# Debounced amount edits and quote renewal have a separate per-wallet budget.
+[[ratelimits]]
+name = "SWAP_QUOTE_RATE_LIMITER"
+namespace_id = "1005"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
 [[ratelimits]]
 name = "AUTHENTICATED_RATE_LIMITER"
 namespace_id = "1002"

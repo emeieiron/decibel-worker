@@ -110,18 +110,19 @@ describe("swap sponsorship authorization", () => {
 
 
 describe("swap quotes without sponsorship", () => {
-  it("returns an authorized quote without a Gas Station key", async () => {
+  it.each([true, false])("uses a separate per-wallet quote budget without a Gas Station key (allowed=%s)", async allowed => {
     const now = Math.floor(Date.now() / 1000);
     const claims = { iat: now, exp: now + 3600, jti: "22".repeat(16), network: "mainnet" as const,
       role: "owner" as const, wallet: owner };
     const token = await issueSessionToken(claims, secret);
     const limiter = { limit: async () => ({ success: true }) };
+    const quoteLimiter = { limit: vi.fn(async () => ({ success: allowed })) };
     const env = {
       NETWORK: "mainnet", APP_ORIGIN: "flare://mobile", SESSION_SIGNING_KEY: secret,
       SWAPS_ENABLED: "true", PANORA_API_KEY: "test-panora-key",
       SESSIONS: { idFromName: (name: string) => name, get: () => ({ fetch: async () => Response.json(claims) }) },
       AUTHENTICATED_RATE_LIMITER: limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
-      SESSION_CREATION_RATE_LIMITER: limiter,
+      SWAP_QUOTE_RATE_LIMITER: quoteLimiter,
     } as unknown as Env;
     const upstream = vi.fn(async (url: URL, init: RequestInit) => {
       expect(url.origin).toBe("https://api.panora.exchange");
@@ -134,6 +135,12 @@ describe("swap quotes without sponsorship", () => {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(request),
     }), env);
+    expect(quoteLimiter.limit).toHaveBeenCalledWith({ key: `swap:${owner}` });
+    if (!allowed) {
+      expect(response.status).toBe(429);
+      expect(upstream).not.toHaveBeenCalled();
+      return;
+    }
     expect(response.status).toBe(200);
     const body = await response.json<{ authorization: string; payloadHash: string }>();
     expect(body.payloadHash).toBe(validatePanoraQuote(copy(), request).payloadHash);

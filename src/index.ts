@@ -356,7 +356,7 @@ async function swapQuote(request: Request, env: Env): Promise<Response> {
   let swapRequest;
   try { swapRequest = parseSwapRequest(await readJson<unknown>(request), claims.wallet); }
   catch (error) { throw new HttpError(400, safeMessage(error)); }
-  const budget = await env.SESSION_CREATION_RATE_LIMITER.limit({ key: `swap:${claims.wallet}` });
+  const budget = await env.SWAP_QUOTE_RATE_LIMITER.limit({ key: `swap:${claims.wallet}` });
   if (!budget.success) throw new HttpError(429, "Swap quote rate limit exceeded");
   if (!swapProviderHealth.available()) throw new HttpError(503, "Swap provider temporarily unavailable");
   let validated;
