@@ -17,6 +17,12 @@ The Worker and mobile client are versioned separately. A Flare release should re
 - `POST /gas/sponsor/trading`
 - `GET /gas/sponsor/status/:fingerprint`
 - `GET /gas/sponsor/swap-availability` (owner session; read-only deployment policy)
+- `GET /referrals/config`
+- `GET /referrals/code/:code` (valid Flare session)
+- `GET /referrals/status` (owner session)
+- `POST /referrals/redeem` (owner session; body `{ "code": "..." }`)
+
+Referral routes are controlled by the public `REFERRALS_ENABLED` variable. They fail closed unless its value is exactly `true`; the deployment value is set in `wrangler.toml`. Set it to `false` and deploy to disable redemption. Status remains available to reconcile recorded pending or bound referrals. Redemption is journaled before the upstream mutation, and uncertain outcomes remain pending; the worker does not automatically retry them. `DEFAULT_REFERRAL_CODE` supplies the suggested code in config and can be removed independently of the worker code.
 
 Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions or quote-authorized Panora swaps. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
 

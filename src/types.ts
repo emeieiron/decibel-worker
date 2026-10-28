@@ -52,5 +52,7 @@ export interface Env {
   PANORA_API_KEY?: string;
   SWAPS_ENABLED?: string;
   SWAP_SPONSORSHIP_ENABLED?: string;
+  REFERRALS_ENABLED?: string;
+  DEFAULT_REFERRAL_CODE?: string;
   SESSION_SIGNING_KEY: string;
 }

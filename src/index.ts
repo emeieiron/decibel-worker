@@ -19,6 +19,7 @@ import {
   validateGasStationRequest,
 } from "./gasStation";
 import { validateTopic } from "./topics";
+import { handleReferral, ReferralError } from "./referrals";
 import { forwardableCloseCode } from "./websocket";
 import {
   delegationAuthorizesAllPerpMarkets,
@@ -102,6 +103,11 @@ export default {
       await enforceIpBackstop(request, env);
 
       const url = new URL(request.url);
+      const referralResponse = await handleReferral(request, env, {
+        authenticate: (req) => authenticate(req, env),
+        rateLimit: (claims) => enforceSessionRateLimit(claims, env),
+      });
+      if (referralResponse) return corsResponse(env, referralResponse);
       if (request.method === "POST" && url.pathname === "/v1/session/anonymous") {
         return corsResponse(env, await createAnonymousSession(request, env));
       }
@@ -891,6 +897,7 @@ function corsResponse(env: Env, response: Response | null, status?: number): Res
 
 function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) return jsonError(error.message, error.status);
+  if (error instanceof ReferralError) return jsonError(error.message, error.status);
   console.error("Internal request failure:", error);
   return jsonError("Internal request failure", 500);
 }
