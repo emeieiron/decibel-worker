@@ -200,13 +200,13 @@ describe("referral routes", () => {
     expect(fixture.state.mock.calls.some(call => call[1]?.method === "POST")).toBe(true);
   });
 
-  it("keeps 408 submission outcomes pending and does not retry them", async () => {
+  it("keeps 408 outcomes pending and replays only on another explicit submission", async () => {
     const fixture = setup({ redeem: () => new Response("timeout", { status: 408 }) });
     const first = await fixture.run("/referrals/redeem", "POST", { code }) as Response;
     const second = await fixture.run("/referrals/redeem", "POST", { code }) as Response;
     expect(first.status).toBe(202);
     expect(second.status).toBe(202);
-    expect(fixture.upstream.mock.calls.filter(call => new URL(String(call[0])).pathname.endsWith("/referrals/redeem"))).toHaveLength(1);
+    expect(fixture.upstream.mock.calls.filter(call => new URL(String(call[0])).pathname.endsWith("/referrals/redeem"))).toHaveLength(2);
   });
 
   it("keeps a pending intent pending when an unrelated new subaccount appears", async () => {
@@ -224,7 +224,8 @@ describe("referral routes", () => {
       return new Response(null, { status: 404 });
     });
     const status = await fixture.run("/referrals/status") as Response;
-    expect(await status.json()).toMatchObject({ account: wallet, status: "pending", referral_code: code, trading_account: otherSubaccount });
+    expect(await status.json()).toEqual({ account: wallet, status: "pending", referral_code: code });
+    expect(fixture.upstream.mock.calls.filter(call => new URL(String(call[0])).pathname.endsWith("/referrals/redeem"))).toHaveLength(1);
   });
 
   it("confirms attribution only from a matching live binding and verifies cached trading accounts", async () => {
@@ -283,6 +284,104 @@ describe("referral routes", () => {
     const response = await fixture.run("/referrals/redeem", "POST", { code }) as Response;
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: "bound", referral_code: code });
+  });
+
+  it("sends JSON with the declared upstream media type", async () => {
+    const fixture = setup();
+    await fixture.run("/referrals/redeem", "POST", { code });
+    const post = fixture.upstream.mock.calls.find(call => new URL(String(call[0])).pathname.endsWith("/referrals/redeem"));
+    const request = new Request(post![0], post![1]);
+    expect(request.headers.get("Content-Type")).toBe("application/json");
+    expect(await request.json()).toEqual({ account: wallet, referral_code: code });
+  });
+
+  it("recovers a lost acknowledgement through same-pair replay despite exhausted validation", async () => {
+    let attempts = 0;
+    const fixture = setup({ redeem: () => {
+      attempts++;
+      if (attempts === 1) throw new Error("response lost after upstream commit");
+      return Response.json({ account: wallet, referral_code: code });
+    } });
+    expect((await fixture.run("/referrals/redeem", "POST", { code }))!.status).toBe(202);
+    fixture.upstream.mockReset();
+    fixture.upstream.mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/referrals/redeem")) {
+        expect(JSON.parse(init!.body as string)).toEqual({ account: wallet, referral_code: code });
+        attempts++;
+        return Response.json({ account: wallet, referral_code: code });
+      }
+      if (path.endsWith("/subaccounts")) return Response.json([]);
+      throw new Error("Replay unexpectedly gated by validation, binding or history");
+    });
+    const result = await fixture.run("/referrals/redeem", "POST", { code });
+    expect(await result!.json()).toEqual({ account: wallet, status: "bound", referral_code: code });
+    expect(attempts).toBe(2);
+    await expect(fixture.run("/referrals/redeem", "POST", { code: "DIFFERENT" })).rejects.toThrow("different referral code");
+    expect(attempts).toBe(2);
+  });
+
+  it("accepts a canonical-equivalent short response address", async () => {
+    const fixture = setup({ redeem: () => Response.json({ account: "0x1234", referral_code: code }) });
+    expect(await (await fixture.run("/referrals/redeem", "POST", { code }))!.json()).toMatchObject({ status: "bound" });
+  });
+
+  it("preserves an earlier unknown outcome when a retry is rejected", async () => {
+    let attempts = 0;
+    const fixture = setup({ redeem: () => new Response(null, { status: ++attempts === 1 ? 502 : 403 }) });
+    expect((await fixture.run("/referrals/redeem", "POST", { code }))!.status).toBe(202);
+    expect((await fixture.run("/referrals/redeem", "POST", { code }))!.status).toBe(202);
+    expect(await (await fixture.run("/referrals/status"))!.json()).toEqual({ account: wallet, status: "pending", referral_code: code });
+    expect(attempts).toBe(2);
+    expect(fixture.state.mock.calls.some(call => call[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("preserves the dispatched pair even when its first response is a rejection", async () => {
+    const fixture = setup({ redeem: () => new Response(null, { status: 415 }) });
+    expect((await fixture.run("/referrals/redeem", "POST", { code }))!.status).toBe(202);
+    expect(await (await fixture.run("/referrals/status"))!.json()).toMatchObject({ status: "pending", referral_code: code });
+    expect(fixture.state.mock.calls.some(call => call[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("does not erase a concurrent confirmed retry when the original request is rejected late", async () => {
+    let releaseFirst!: (response: Response) => void;
+    let firstDispatched!: () => void;
+    const dispatched = new Promise<void>(resolve => { firstDispatched = resolve; });
+    let attempts = 0;
+    const fixture = setup({ accounts: [], redeem: () => {
+      if (++attempts === 1) {
+        firstDispatched();
+        return new Promise<Response>(resolve => { releaseFirst = resolve; });
+      }
+      return Response.json({ account: wallet, referral_code: code });
+    } });
+    const first = fixture.run("/referrals/redeem", "POST", { code });
+    await dispatched;
+    expect(await (await fixture.run("/referrals/redeem", "POST", { code }))!.json()).toEqual({ account: wallet, status: "bound", referral_code: code });
+    releaseFirst(new Response(null, { status: 415 }));
+    expect((await first)!.status).toBe(202);
+    expect(await (await fixture.run("/referrals/status"))!.json()).toEqual({ account: wallet, status: "bound", referral_code: code });
+    await expect(fixture.run("/referrals/redeem", "POST", { code: "DIFFERENT" })).rejects.toThrow("different referral code");
+    expect(attempts).toBe(2);
+    expect(fixture.state.mock.calls.some(call => call[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("upgrades surviving legacy pending journals instead of expiring their pair identity", async () => {
+    const fixture = setup();
+    fixture.state.mockImplementationOnce(async () => Response.json({
+      wallet, code, status: "pending", priorAccounts: [], expiresAt: Date.now() - 1,
+    }));
+    expect(await (await fixture.run("/referrals/status"))!.json()).toEqual({ account: wallet, status: "pending", referral_code: code });
+    const upgrade = fixture.state.mock.calls.find(call => call[1]?.method === "PUT");
+    expect(JSON.parse(upgrade![1]!.body as string)).toEqual({ kind: "referral-intent", wallet, code, status: "pending", priorAccounts: [] });
+  });
+
+  it("keeps successful redemption confirmed while account and attribution indexes lag", async () => {
+    const fixture = setup({ accounts: [] });
+    const first = await fixture.run("/referrals/redeem", "POST", { code });
+    expect(await first!.json()).toEqual({ account: wallet, status: "bound", referral_code: code });
+    expect(await (await fixture.run("/referrals/status"))!.json()).toEqual({ account: wallet, status: "bound", referral_code: code });
+    expect(fixture.upstream.mock.calls.filter(call => new URL(String(call[0])).pathname.endsWith("/referrals/redeem"))).toHaveLength(1);
   });
 
   it("makes only one upstream redemption for concurrent same-owner requests", async () => {

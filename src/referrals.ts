@@ -1,20 +1,18 @@
 import type { Env, SessionClaims } from "./types";
 
-const INTENT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-const DEFINITIVE_REJECTIONS = new Set([400, 401, 403, 404, 422, 429]);
 
 type ReferralStatus = "eligible" | "bound" | "ineligible" | "pending";
 type IntentStatus = "pending" | "bound";
 
 interface ReferralIntent {
+  kind: "referral-intent";
   wallet: string;
   code: string;
   status: IntentStatus;
   tradingAccount?: string;
   priorAccounts: string[];
-  expiresAt: number;
 }
 
 interface ReferralBinding {
@@ -115,13 +113,10 @@ async function referralStatus(env: Env, fetcher: typeof fetch, wallet: string): 
   }
 
   if (intent?.status === "pending") {
-    const accounts = await ownedAccounts(env, fetcher, wallet);
-    const tradingAccount = accounts.find(account => !intent.priorAccounts.includes(account));
     return {
       account: wallet,
       status: "pending" satisfies ReferralStatus,
       referral_code: intent.code,
-      ...(tradingAccount ? { trading_account: tradingAccount } : {}),
     };
   }
 
@@ -143,23 +138,12 @@ async function redeemReferral(
     if (existing.code !== code) {
       throw new ReferralError(409, "A different referral code is already recorded");
     }
-    const live = await getBinding(env, fetcher, wallet);
-    if (live) {
-      if (live.code === code) {
-        return noStore({ account: wallet, status: "bound", referral_code: code });
-      }
-      throw new ReferralError(409, `Account is already bound to referral code ${live.code}`);
+    if (existing.status === "pending") {
+      // The upstream handler is idempotent for this exact wallet/code pair. A retry must
+      // reach it even when the original redemption exhausted or deactivated the code.
+      return submitReferral(env, fetcher, stub, existing);
     }
-    const accounts = await ownedAccounts(env, fetcher, wallet);
-    const tradingAccount = existing.tradingAccount && accounts.includes(existing.tradingAccount)
-      ? existing.tradingAccount
-      : accounts.find(account => !existing.priorAccounts.includes(account));
-    return noStore({
-      account: wallet,
-      status: existing.status === "bound" ? "bound" : "pending",
-      referral_code: code,
-      ...(tradingAccount ? { trading_account: tradingAccount } : {}),
-    }, existing.status === "bound" ? 200 : 202);
+    return noStore(await referralStatus(env, fetcher, wallet));
   }
 
   const liveBinding = await getBinding(env, fetcher, wallet);
@@ -181,11 +165,11 @@ async function redeemReferral(
   }
 
   const intent: ReferralIntent = {
+    kind: "referral-intent",
     wallet,
     code,
     status: "pending",
     priorAccounts,
-    expiresAt: Date.now() + INTENT_TTL_MS,
   };
   const created = await stub.fetch("https://state/", {
     method: "POST",
@@ -202,6 +186,17 @@ async function redeemReferral(
     throw new ReferralError(503, "Unable to reserve referral redemption");
   }
 
+  return submitReferral(env, fetcher, stub, intent);
+}
+
+/** One bounded submission per explicit action; status reads never dispatch mutations. */
+async function submitReferral(
+  env: Env,
+  fetcher: typeof fetch,
+  stub: DurableObjectStub,
+  intent: ReferralIntent,
+): Promise<Response> {
+  const { wallet, code, priorAccounts } = intent;
   let response: Response;
   try {
     response = await upstreamFetch(fetcher, env, "referrals/redeem", {
@@ -214,7 +209,8 @@ async function redeemReferral(
 
   if (response.ok) {
     const result = await response.json().catch(() => null) as unknown;
-    if (!isRecord(result) || result.account !== wallet || result.referral_code !== code) {
+    if (!isRecord(result) || !isAddress(result.account) ||
+        normalizeAddress(result.account) !== wallet || result.referral_code !== code) {
       return noStore({ account: wallet, status: "pending", referral_code: code }, 202);
     }
     intent.status = "bound";
@@ -245,16 +241,13 @@ async function redeemReferral(
       });
     }
     if (live && live.code !== code) {
-      await deleteIntent(stub);
-      throw new ReferralError(409, `Account is already bound to referral code ${live.code}`);
+      return noStore({ account: wallet, status: "bound", referral_code: live.code });
     }
     return noStore({ account: wallet, status: "pending", referral_code: code }, 202);
   }
 
-  if (DEFINITIVE_REJECTIONS.has(response.status)) {
-    await deleteIntent(stub);
-    throw new ReferralError(response.status, "Referral redemption was rejected");
-  }
+  // A rejected attempt may overlap another same-pair submission. Preserve the journal
+  // after dispatch so a late rejection cannot erase an unknown or confirmed result.
   return noStore({ account: wallet, status: "pending", referral_code: code }, 202);
 }
 
@@ -364,20 +357,24 @@ async function readIntent(stub: DurableObjectStub, wallet: string): Promise<Refe
   if (!isRecord(body) || body.wallet !== wallet || typeof body.code !== "string" ||
       !CODE_PATTERN.test(body.code) || (body.status !== "pending" && body.status !== "bound") ||
       !Array.isArray(body.priorAccounts) || !body.priorAccounts.every(isAddress) ||
-      typeof body.expiresAt !== "number" || !Number.isSafeInteger(body.expiresAt) || body.expiresAt <= Date.now() ||
+      (body.kind !== "referral-intent" &&
+        (typeof body.expiresAt !== "number" || !Number.isSafeInteger(body.expiresAt))) ||
       (body.tradingAccount !== undefined && !isAddress(body.tradingAccount))) {
     throw new ReferralError(503, "Corrupt referral state");
   }
   const priorAccounts = body.priorAccounts.map(normalizeAddress);
   const tradingAccount = body.tradingAccount === undefined ? undefined : normalizeAddress(body.tradingAccount);
-  return {
+  const intent: ReferralIntent = {
+    kind: "referral-intent",
     wallet,
     code: body.code,
     status: body.status,
     priorAccounts,
-    expiresAt: body.expiresAt,
     ...(tradingAccount ? { tradingAccount } : {}),
   };
+  // Upgrade a surviving legacy record before its old alarm can erase recovery identity.
+  if (body.kind !== "referral-intent") await writeIntent(stub, intent);
+  return intent;
 }
 
 async function writeIntent(stub: DurableObjectStub, intent: ReferralIntent): Promise<void> {
@@ -386,11 +383,6 @@ async function writeIntent(stub: DurableObjectStub, intent: ReferralIntent): Pro
     body: JSON.stringify(intent),
   });
   if (response.status !== 204) throw new ReferralError(503, "Unable to update referral state");
-}
-
-async function deleteIntent(stub: DurableObjectStub): Promise<void> {
-  const response = await stub.fetch("https://state/", { method: "DELETE" });
-  if (!response.ok) throw new ReferralError(503, "Unable to clear referral state");
 }
 
 function referralStub(env: Env, wallet: string): DurableObjectStub {
@@ -426,7 +418,7 @@ function upstreamFetch(
       : upstreamUrl(env, target);
   return fetcher(url, {
     method: options.method ?? "GET",
-    headers: headers(env),
+    headers: { ...headers(env), ...(options.body ? { "Content-Type": "application/json" } : {}) },
     ...(options.body ? { body: options.body } : {}),
     redirect: "manual",
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
