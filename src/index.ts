@@ -128,6 +128,9 @@ export default {
       if (url.pathname === "/aptos/v1" || url.pathname.startsWith("/aptos/v1/")) {
         return corsResponse(env, await proxyAptos(request, env));
       }
+      if (url.pathname === "/gas/sponsor/trading-availability") {
+        return corsResponse(env, await tradingSponsorshipAvailability(request, env));
+      }
       if (url.pathname === "/gas/sponsor/swap-availability") {
         return corsResponse(env, await swapSponsorshipAvailability(request, env));
       }
@@ -406,6 +409,16 @@ function swapSponsorshipConfigured(env: Env): boolean {
     Boolean(env.GAS_STATION_API_KEY?.trim()) && Date.now() >= swapSponsorshipBlockedUntil;
 }
 
+async function tradingSponsorshipAvailability(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") throw new HttpError(405, "Sponsorship availability requires GET");
+  const claims = await authenticate(request, env);
+  await enforceSessionRateLimit(claims, env);
+  // Deployment policy only: upstream rules can still reject an individual transaction.
+  return Response.json({ available: env.TRADING_SPONSORSHIP_ENABLED === "true" &&
+    Boolean(env.GAS_STATION_API_KEY?.trim()) },
+    { headers: { "Cache-Control": "no-store" } });
+}
+
 async function swapSponsorshipAvailability(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") throw new HttpError(405, "Sponsorship availability requires GET");
   const claims = await authenticate(request, env);
@@ -497,6 +510,12 @@ async function proxyGasStation(request: Request, env: Env): Promise<Response> {
     }
     throw new HttpError(409, "Sponsorship request is already being processed");
   }
+  // Resolve existing fingerprints first: disabling sponsorship must never describe a
+  // previously submitted or uncertain request as definitely safe to retry with self-pay.
+  if (!ownerOnly && env.TRADING_SPONSORSHIP_ENABLED !== "true") {
+    await sponsorship.fetch("https://state/", { method: "DELETE" });
+    return sponsorshipNotAllowed("Trading sponsorship is unavailable");
+  }
   const gasStationApiKey = env.GAS_STATION_API_KEY?.trim();
   if (!gasStationApiKey) {
     await sponsorship.fetch("https://state/", { method: "DELETE" });
@@ -574,7 +593,7 @@ function sponsorshipUnavailable(
   );
 }
 
-/** Rejected by policy before anything is reserved or submitted, so self-pay is safe. */
+/** A definite policy rejection with no submitted or uncertain transaction, so self-pay is safe. */
 function sponsorshipNotAllowed(reason: string): Response {
   return Response.json(
     { error: reason, code: "gas_station_transaction_not_allowed" },

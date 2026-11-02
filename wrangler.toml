@@ -16,6 +16,8 @@ NETWORK = "mainnet"
 SWAPS_ENABLED = "true"
 # Enable only after verifying the upstream Panora policy and Gas Station resource.
 SWAP_SPONSORSHIP_ENABLED = "false"
+# Keep trading self-paid until the upstream Gas Station trading rules are approved.
+TRADING_SPONSORSHIP_ENABLED = "false"
 REFERRALS_ENABLED = "true"
 DEFAULT_REFERRAL_CODE = "OC9E6E"
 APP_ORIGIN = "flare://mobile"

@@ -17,6 +17,7 @@ The Worker and mobile client are versioned separately. A Flare release should re
 - `POST /gas/sponsor/trading`
 - `GET /gas/sponsor/status/:fingerprint`
 - `GET /gas/sponsor/swap-availability` (owner session; read-only deployment policy)
+- `GET /gas/sponsor/trading-availability` (valid session; read-only deployment policy)
 - `GET /referrals/config`
 - `GET /referrals/code/:code` (valid Flare session)
 - `GET /referrals/status` (owner session)
@@ -27,6 +28,14 @@ Referral routes are controlled by the public `REFERRALS_ENABLED` variable. They 
 Gas sponsorship accepts only verified Kaptos BCS transactions for configured Decibel entry functions or quote-authorized Panora swaps. It binds sender, chain, package, subaccount, role, and Aptos-USDC metadata before attaching the upstream key. The Worker then converts Kaptos’ signed `RawTransactionWithData` envelope to the `SimpleTransaction` envelope required by `@aptos-labs/gas-station-client`. The signed raw transaction and authenticator remain unchanged; fingerprints continue to identify the original Kaptos request. Compatibility tests deserialize the outbound bytes with the official Aptos SDK and compare signing messages.
 
 Successful sponsorships are correlated by Kaptos' domain-separated request fingerprint for seven days. The fixed status route lets an interrupted client recover the on-chain transaction hash and continue normal Kaptos reconciliation without resubmitting the transaction.
+
+## Trading sponsorship policy
+
+`TRADING_SPONSORSHIP_ENABLED` defaults to `false`. The current upstream Gas Station permits account setup but does not allow trading functions. Leave its permissions unchanged unless an operator explicitly approves an expansion. The availability route reports only the deployment policy and whether a resource key is configured; `true` does not guarantee eligibility or remaining sponsorship budget. It never signs or submits a transaction.
+
+When the policy is disabled, mobile clients can review a bounded APT fee budget and request explicit self-payment consent before one order confirmation. Fees are paid by the device trading key, so funding that key is a separate action. An unavailable read remains unknown rather than proving that any submitted transaction is safe to replace. Existing pending fingerprints must be reconciled before a replacement, regardless of the current policy.
+
+Deploy with `--keep-vars --var TRADING_SPONSORSHIP_ENABLED:false` to preserve other dashboard variables while explicitly keeping trading sponsorship disabled. Enabling the flag also requires separately approved, verified upstream trading rules; changing this flag does not configure Geomi.
 
 ## Local development
 
@@ -39,7 +48,7 @@ npm run dev
 
 `.dev.vars` must define `DECIBEL_NODE_API_KEY` and a `SESSION_SIGNING_KEY` with at least 32 random bytes. Set `GAS_STATION_API_KEY` to enable sponsorship; this is a separate **Geomi Gas Station resource key**, not the node API key. Never commit `.dev.vars`.
 
-An absent or blank Gas Station key returns HTTP 503 with `code=gas_station_not_configured` without submitting a new transaction. Previously submitted or pending fingerprints are still resolved first. An upstream 401 returns HTTP 503 with `code=gas_station_credentials_rejected` after releasing its reservation. A transaction outside the sponsorship policy (function, module, role, subaccount, asset, or argument checks) returns HTTP 403 with `code=gas_station_transaction_not_allowed` before anything is reserved or submitted. None of these invalidates the mobile wallet session. Clients may offer explicit self-pay for those three codes; a generic 503 or transport failure remains uncertain and must not trigger resubmission.
+An absent or blank Gas Station key returns HTTP 503 with `code=gas_station_not_configured` without submitting a new transaction. Previously submitted or pending fingerprints are still resolved first. An upstream 401 returns HTTP 503 with `code=gas_station_credentials_rejected` after releasing its reservation. A transaction outside the sponsorship policy (function, module, role, subaccount, asset, or argument checks) returns HTTP 403 with `code=gas_station_transaction_not_allowed` before submission. A disabled trading policy returns the same code only after checking existing fingerprints and releasing its newly created reservation; submitted and uncertain fingerprints retain their existing recovery behavior. None of these invalidates the mobile wallet session. Clients may offer explicit self-pay for those three codes; a generic 503 or transport failure remains uncertain and must not trigger resubmission.
 
 For local development, pipe each value into the helper so it is never placed in shell history:
 

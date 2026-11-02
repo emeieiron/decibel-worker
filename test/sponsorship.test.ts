@@ -4,15 +4,17 @@ vi.mock("../src/state", () => ({ FlareState: class {} }));
 import worker from "../src/index";
 import { issueSessionToken } from "../src/security";
 import type { Env } from "../src/types";
-import { sponsoredFixture, DECIBEL_PACKAGE, USDC_METADATA } from "./sponsorshipFixture";
+import { sponsoredFixture, addressBytes, DECIBEL_PACKAGE, USDC_METADATA } from "./sponsorshipFixture";
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function fixture(key?: string, sessionLimiter?: { limit: (input: { key: string }) => Promise<{ success: boolean }> }) {
-  const signed = sponsoredFixture({ functionName: "create_new_subaccount", arguments: [] });
+async function fixture(key?: string, sessionLimiter?: { limit: (input: { key: string }) => Promise<{ success: boolean }> }, trading = false) {
+  const signed = sponsoredFixture(trading
+    ? { functionName: "configure_user_settings_for_market", arguments: [addressBytes("0x22"), addressBytes("0x33"), [1], [1]] }
+    : { functionName: "create_new_subaccount", arguments: [] });
   const now = Math.floor(Date.now() / 1000);
   const claims = { iat: now, exp: now + 3600, jti: "11".repeat(16), network: "mainnet" as const,
-    role: "owner" as const, wallet: signed.walletAddress };
+    role: "owner" as const, wallet: signed.walletAddress, ...(trading ? { subaccount: "0x" + "0".repeat(62) + "22" } : {}) };
   const signingKey = "test-session-key-with-more-than-thirty-two-bytes";
   const token = await issueSessionToken(claims, signingKey);
   let record: unknown;
@@ -33,6 +35,7 @@ async function fixture(key?: string, sessionLimiter?: { limit: (input: { key: st
     NETWORK: "mainnet", APP_ORIGIN: "flare://mobile", SESSION_SIGNING_KEY: signingKey,
     DECIBEL_PACKAGE_ADDRESS: DECIBEL_PACKAGE, USDC_METADATA_ADDRESS: USDC_METADATA,
     GAS_STATION_ORIGIN: "https://api.mainnet.aptoslabs.com/gs/v1", GAS_STATION_API_KEY: key,
+    TRADING_SPONSORSHIP_ENABLED: "true",
     SESSIONS: namespace(async () => Response.json(claims)), SPONSORSHIPS: namespace(stateFetch),
     AUTHENTICATED_RATE_LIMITER: sessionLimiter ?? limiter, IP_BACKSTOP_RATE_LIMITER: limiter,
   } as unknown as Env;
@@ -123,5 +126,51 @@ describe("session rate limiting", () => {
     await f.send();
 
     expect(refuse.limit).toHaveBeenCalledWith({ key: `${f.wallet}:primary` });
+  });
+});
+
+
+describe("disabled trading sponsorship", () => {
+  it("keeps owner onboarding sponsorship available", async () => {
+    const hash = "0x" + "44".repeat(32);
+    const upstream = vi.fn(async () => Response.json({ transactionHash: hash })); vi.stubGlobal("fetch", upstream);
+    const f = await fixture("test-only-key");
+    f.env.TRADING_SPONSORSHIP_ENABLED = "false";
+    expect(await (await f.send()).json()).toEqual({ transactionHash: hash });
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+  it.each([undefined, "false"])("rejects only a new reservation when policy is %s", async enabled => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const f = await fixture("test-only-key", undefined, true);
+    f.env.TRADING_SPONSORSHIP_ENABLED = enabled;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await f.send("trading");
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "gas_station_transaction_not_allowed" });
+    }
+    expect(f.stateFetch.mock.calls.map(c => c[1]?.method)).toEqual(["POST", "DELETE", "POST", "DELETE"]);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("returns a previously submitted hash after trading is disabled", async () => {
+    const hash = "0x" + "33".repeat(32);
+    const upstream = vi.fn(async () => Response.json({ transactionHash: hash })); vi.stubGlobal("fetch", upstream);
+    const f = await fixture("test-only-key", undefined, true);
+    expect(await (await f.send("trading")).json()).toEqual({ transactionHash: hash });
+    f.env.TRADING_SPONSORSHIP_ENABLED = "false";
+    f.env.GAS_STATION_API_KEY = undefined;
+    expect(await (await f.send("trading")).json()).toEqual({ transactionHash: hash });
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(f.stateFetch.mock.calls.some(c => c[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("keeps a previous uncertain reservation pending after trading is disabled", async () => {
+    const upstream = vi.fn(async () => { throw new Error("connection lost"); }); vi.stubGlobal("fetch", upstream);
+    const f = await fixture("test-only-key", undefined, true);
+    expect((await f.send("trading")).status).toBe(502);
+    f.env.TRADING_SPONSORSHIP_ENABLED = "false";
+    expect((await f.send("trading")).status).toBe(409);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(f.stateFetch.mock.calls.some(c => c[1]?.method === "DELETE")).toBe(false);
   });
 });
