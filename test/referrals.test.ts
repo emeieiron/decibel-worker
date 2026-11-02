@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleReferral } from "../src/referrals";
 import type { Env, SessionClaims } from "../src/types";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const wallet = `0x${"0".repeat(60)}1234`;
 const subaccount = `0x${"0".repeat(60)}5678`;
@@ -293,6 +296,33 @@ describe("referral routes", () => {
     const request = new Request(post![0], post![1]);
     expect(request.headers.get("Content-Type")).toBe("application/json");
     expect(await request.json()).toEqual({ account: wallet, referral_code: code });
+  });
+
+  it("logs only event, method and status without consuming a rejected response", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rejected = new Response(`private ${wallet} ${code} secret`, { status: 403 });
+    const fixture = setup({ redeem: () => rejected });
+    const result = await fixture.run("/referrals/redeem", "POST", { code });
+    expect(result!.status).toBe(202);
+    expect(await result!.json()).toEqual({ account: wallet, status: "pending", referral_code: code });
+    expect(warn.mock.calls).toEqual([
+      ["referral_upstream_non_success", { method: "GET", status: 404 }],
+      ["referral_upstream_non_success", { method: "POST", status: 403 }],
+    ]);
+    expect(rejected.bodyUsed).toBe(false);
+    expect(await rejected.text()).toBe(`private ${wallet} ${code} secret`);
+  });
+
+  it("omits transport exception details while preserving pending submission behavior", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fixture = setup({ redeem: () => { throw new Error(`private ${wallet} ${code} secret`); } });
+    const result = await fixture.run("/referrals/redeem", "POST", { code });
+    expect(result!.status).toBe(202);
+    expect(await result!.json()).toEqual({ account: wallet, status: "pending", referral_code: code });
+    expect(warn.mock.calls).toEqual([
+      ["referral_upstream_non_success", { method: "GET", status: 404 }],
+      ["referral_upstream_transport_failure", { method: "POST" }],
+    ]);
   });
 
   it("recovers a lost acknowledgement through same-pair replay despite exhausted validation", async () => {

@@ -405,7 +405,7 @@ function upstreamUrl(env: Env, endpoint: string): URL {
   return new URL(`${env.DECIBEL_REST_ORIGIN.replace(/\/$/, "")}/api/v1/${endpoint}`);
 }
 
-function upstreamFetch(
+async function upstreamFetch(
   fetcher: typeof fetch,
   env: Env,
   target: string | URL,
@@ -416,13 +416,24 @@ function upstreamFetch(
     : /^https?:\/\//.test(target)
       ? new URL(target)
       : upstreamUrl(env, target);
-  return fetcher(url, {
-    method: options.method ?? "GET",
-    headers: { ...headers(env), ...(options.body ? { "Content-Type": "application/json" } : {}) },
-    ...(options.body ? { body: options.body } : {}),
-    redirect: "manual",
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-  });
+  const method = options.method ?? "GET";
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      method,
+      headers: { ...headers(env), ...(options.body ? { "Content-Type": "application/json" } : {}) },
+      ...(options.body ? { body: options.body } : {}),
+      redirect: "manual",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    console.warn("referral_upstream_transport_failure", { method });
+    throw error;
+  }
+  if (!response.ok) {
+    console.warn("referral_upstream_non_success", { method, status: response.status });
+  }
+  return response;
 }
 
 function headers(env: Env): HeadersInit {
